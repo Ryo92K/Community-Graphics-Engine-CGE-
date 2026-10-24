@@ -1,7 +1,7 @@
 # Community Graphics Engine (CGE)
 
 CGE 0.5.0 is an open-source SKSE plugin providing color controls, native motion
-blur, HDR bloom and depth-based distance fog. Effects run before the HUD and game menus are drawn.
+blur, HDR bloom and depth-based distance fog.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ blur, HDR bloom and depth-based distance fog. Effects run before the HUD and gam
 - **[SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352)**,
   version **3.14 or newer**, and its listed requirements
 
-Other game versions are not supported by this build. Motion blur additionally
+Other game versions are not supported by this alpha. Motion blur additionally
 requires native TAA at native render resolution.
 
 The settings UI belongs to SKSE Menu Framework. CGE does not bundle its runtime,
@@ -20,52 +20,10 @@ Install the framework separately through MO2 or Vortex.
 
 ## Installation
 
-1. Close Skyrim and back up Data/SKSE/Plugins/CGE.ini.
-2. Install SKSE Menu Framework and its listed requirements with MO2 or Vortex.
-3. Replace the older CGE mod with the complete CGE archive, then restore your
-   saved CGE.ini if you want to keep your settings.
-4. Keep Address Library and the framework enabled, then launch Skyrim through SKSE.
-5. Open the framework's Mod Control Panel (**F1 by default**) and select
+1. Install Requirements and this mod with MO2 or Vortex.
+2. Launch Skyrim through SKSE.
+3. Open the framework's Mod Control Panel (**F1 by default**) and select
    **Community Graphics Engine**.
-
-No CGE files belong beside SkyrimSE.exe.
-CGE's previous menu, font and keyboard/mouse hooks have been removed.
-Its old menu, save, reset and comparison shortcuts no longer apply.
-The framework's own settings control its opening key, theme, font and input.
-
-Existing CGE.ini files remain readable. Obsolete [Input] shortcut entries are
-ignored and omitted on the next save. Color, profile, timing, bloom and motion
-settings are retained.
-
-## Settings pages
-
-| Category | Controls |
-| --- | --- |
-| General | Master effect switch, effect status and Reset All |
-| Effects / Color | Exposure, contrast, saturation, sharpness, gamma and temperature |
-| Effects / Bloom | Bloom switch, intensity, threshold and radius |
-| Effects / Distance Fog | Fog switch, density and start distance |
-| Effects / Motion Blur | Global motion settings, quality and Natural/Strong defaults |
-| Profiles | Automatic mode, profile transitions, dawn and dusk |
-
-**Effects enabled** bypasses all CGE effects when unchecked.
-On **Profiles**, **Automatic profiles** switches between shared values and
-location/time profiles. On its first activation, shared values seed all automatic
-profiles.
-
-On **Color**, **Bloom** and **Distance Fog**, **Edit Profile** selects Shared, Interior, Exterior Day
-or Exterior Night. These pages keep the same selection. Editing a profile does
-not force the game to use it. Automatic profile controls are disabled while
-shared mode is selected.
-
-Each slider has a numeric field and a Reset button. Labels appear above their
-controls. **Save** writes all configured settings to CGE.ini for the next launch.
-**Reset Color** resets only color controls, preserving bloom and fog.
-**Reset Bloom** resets only bloom. **Reset Fog** resets only fog.
-**Reset All**, on General, restores neutral color controls, shared mode and all optional
-effects disabled. Save afterward to keep the reset.
-
-The page reports unsaved changes and whether the save succeeded.
 
 ## Color controls
 
@@ -85,64 +43,6 @@ A missing player cell or clock retains the last valid profile state.
 
 Older Exterior settings seed both Exterior Day and Exterior Night.
 
-## Bloom
-
-Enable **Bloom enabled** on the selected profile's page.
-
-- **Bloom Intensity:** 0 to 2; default 0.15. Controls the strength of scattered light.
-- **Bloom Threshold:** 0 to 1; default 1. Lower values include dimmer sources.
-- **Bloom Radius:** 1 to 64; default 32. Spreads the halo over a larger area.
-
-Bloom runs on linear HDR highlights before Skyrim's tone mapping. Each profile
-has its own switch and values. The master Effects enabled checkbox also bypasses
-bloom. Skyrim's built-in bloom remains unchanged.
-
-If the verified HDR call is unavailable or already replaced by another plugin,
-CGE skips bloom and records the reason in CGE.log.
-
-## Distance fog
-
-Open **Effects / Distance Fog**, select **Edit Profile** and check **Fog enabled**.
-
-- **Density:** 0 to 1; default 0.35. Higher values make distant surfaces more opaque.
-- **Start Distance (units):** 0 to 50000; default 2000. Surfaces closer than this
-  distance keep their original appearance.
-
-Distance is reconstructed from native scene depth and the current camera's
-near/far planes. It is measured along the camera's view axis, in game units.
-Fog builds up progressively beyond the start distance using a fixed cool-gray
-tint. The current controls are On/Off, density and start distance.
-
-Fog follows Shared, Interior, Exterior Day and Exterior Night profiles, including
-their transitions. Save keeps the values across launches. The effect is disabled
-by default, so existing 0.4 configurations keep their previous appearance.
-
-The pass runs before bloom and native tone mapping. Clear-depth sky pixels are
-left unchanged, and the HUD is drawn afterward. Native TAA and motion blur do
-not need to be enabled. Scene depth and a valid perspective world camera are
-required; missing or unsupported inputs skip the pass and are reported in CGE.log.
-
-This is a screen-space depth effect. Transparent surfaces can follow the depth
-of the surface behind them. It adds a distance haze to the game's existing fog;
-it does not provide height fog or volumetric lighting.
-
-## Motion blur
-
-Motion blur is global and disabled by default. It uses native velocity and depth
-buffers, not a previous-frame image blend.
-
-- **Intensity:** 0 to 2; default 0.5.
-- **Blur Radius (px):** 1 to 64; default 24.
-- **Quality:** 8, 12 or 16 samples; default 12.
-
-Natural selects intensity 0.5, radius 24 and 12 samples.
-Strong selects intensity 1.5, radius 48 and 16 samples.
-
-Motion blur pauses while the framework blocks the game, in paused game menus,
-during loading and when native data is unavailable. Dynamic resolution,
-replacement temporal pipelines and external upscalers are unsupported for this
-effect. Some transparent objects may have incomplete motion data.
-
 ## Files and troubleshooting
 
 Settings: Data/SKSE/Plugins/CGE.ini.
@@ -157,7 +57,6 @@ the reason. Effects can still use the INI; there is no fallback CGE menu.
 Compatibility with other graphics engines is not established.
 CGE does not load external presets or provide weather, ambient occlusion or
 depth of field. A non-system d3d11.dll blocks initialization.
-To uninstall, close Skyrim and disable CGE.
 
 ## Building
 
