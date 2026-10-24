@@ -27,7 +27,10 @@ class ProfileTransition {
         auto mix=[t](float x,float y){return x+(y-x)*t;};
         return {mix(a.exposure,b.exposure),mix(a.contrast,b.contrast),
             mix(a.saturation,b.saturation),mix(a.sharpen,b.sharpen),
-            mix(a.gamma,b.gamma),mix(a.temperature,b.temperature)};
+            mix(a.gamma,b.gamma),mix(a.temperature,b.temperature),
+            {a.bloom.enabled || b.bloom.enabled,
+                mix(a.bloom.enabled?a.bloom.intensity:0,b.bloom.enabled?b.bloom.intensity:0),
+                mix(a.bloom.threshold,b.bloom.threshold),mix(a.bloom.radius,b.bloom.radius)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

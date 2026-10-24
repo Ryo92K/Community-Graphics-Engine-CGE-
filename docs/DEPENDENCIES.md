@@ -1,102 +1,68 @@
-# Dependencies
+# Dependencies and native interfaces
+
+## Build
+
+Windows x64, MSVC C++20, the Windows SDK, CMake 3.24 or later.
+Python 3 is used by the test-only distribution audit.
+The MSVC runtime is linked statically.
+CGE uses system Direct3D 11.1, DXGI and D3DCompiler_47.
 
 ## Runtime
 
-- Skyrim SE/AE Steam 1.7.104.
-- SKSE 2.3.1, installed separately.
-- Address Library V5 for 1.7.104, installed separately.
+Skyrim Steam 1.7.104, SKSE 2.3.1 and Address Library V5 for this executable.
+SKSE Menu Framework 3.14 or newer provides the settings interface. Install the
+framework and its listed requirements separately.
 
-CGE reads relocation ID 82084 from versionlib-1-7-104-0.bin to locate the
-interface boundary and ID 403521 to locate the player singleton. It checks the database version, address bounds and function
-prefix before installing the hook. Address Library is not bundled.
+## SKSE Menu Framework bridge
 
-## Dear ImGui
+CGE registers five pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
-- Version: 1.93.0
-- Commit: c1aaac65e896a45f81f47a4d68f9959e0f86c859
-- Source: https://github.com/ocornut/imgui/tree/c1aaac65e896a45f81f47a4d68f9959e0f86c859
-- License: MIT
+src/menu_framework.cpp contains CGE's minimal declarations of the public export
+ABI. It resolves all required symbols before registering any page. Missing
+modules, incompatible API generations and incomplete exports produce a log
+message and no local fallback menu.
 
-CGE statically links the core library and Direct3D 11 backend.
-The 13 vendored upstream files are unmodified. Their hashes are recorded in
-third_party/imgui/UPSTREAM-MANIFEST.json.
+GetMenuFrameworkVersion reports an API generation: the inspected provider
+returns 3.8, independently of the package's release version. CGE checks the
+generation and required exports. The 3.14 package minimum is needed for the
+framework's Skyrim 1.7 support.
 
-The package retains the Dear ImGui MIT license, the MIT licensing alternative
-for stb, font notices and the upstream Japanese glyph-data attribution.
-See THIRD-PARTY-NOTICES.txt and licenses/.
+Public API inspected at commit:
+1dcb70179076aae4ab626f43c5baab2735ca5877
+https://github.com/QTR-Modding/SKSE-Menu-Framework-3-API
 
-## SKSE interface
+Provider implementation:
+https://github.com/QTR-Modding/SKSE-Menu-Framework-3/blob/master/src/SKSEMenuFramework.cpp
 
-CGE declares the public loader fields, query information and version metadata
-needed by its plugin interface. Reference:
+No consumer header or framework implementation is copied into CGE.
+No Dear ImGui source, backend or font is compiled or distributed by CGE.
+The separate framework controls its own styling, rendering and input.
 
-https://github.com/ianpatt/skse64/blob/25b72352adb6543fa6d0bd3795780672b2e238e0/skse64/PluginAPI.h
+## Native rendering interfaces
 
-No SKSE implementation or binary is included.
+The exact 1.7.104 ABI and hook bytes are validated before modification.
+CGE hooks DrawInterfaceStart (AE ID 82084) for color/motion effects before the HUD.
+HDR bloom hooks the main cinematic tone-mapping call at ID 105674 + 0x178 and
+validates its original target (105676). It modifies the HDR source passed by
+that call, preserving the native tone mapper and built-in bloom.
 
-## Build dependencies
-
-Windows x64, Visual Studio C++ tools, the Windows SDK and CMake 3.24 or later.
-Python 3 is used by the distribution check.
-
-Windows system runtime and Direct3D compiler DLLs are not redistributed.
-CGE does not link CommonLib or load external renderer presets.
-
-## Cell detection
-
-The 1.7.104 adapter reads the player's parent-cell pointer at offset 0x60 and the
-cell interior flag at offset 0x40. It checks the player form ID and copies bounded
-fields with ReadProcessMemory, rechecking the pointers before accepting a sample.
-The build declares exact runtime compatibility and does not claim independence
-from game object layouts.
-
-Layout and singleton references:
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectREFR.h
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectCELL.h
-https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/P/PlayerCharacter.cpp
-
-## Game clock
-
-The 1.7.104 clock adapter resolves Calendar singleton ID 400447. It reads
-Calendar::gameHour at offset 0x20 and TESGlobal::value at offset 0x34 using
-bounded copies and pointer consistency checks. Values outside 0..24 and
-non-finite samples are rejected. No system clock is used.
+Environment and clock readers use bounded field copies.
+Motion resource adapters validate native d3d11.dll COM ownership, formats,
+device ownership and dimensions before use. There is no CommonLib binary or
+reference mod implementation linked into CGE.
 
 References:
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/C/Calendar.h
-https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/C/Calendar.cpp
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESGlobal.h
-
-## Native motion inputs
-
-The optional motion adapter targets Steam 1.7.104 and resolves Renderer ID 411393,
-ImageSpaceManager ID 414660 and UI ID 400327. Native motion target 7 is read from
-Renderer + 0xBC0 (SRV), and main depth from Renderer + 0x20A0 (SRV). The TAA helper
-is read at ImageSpaceManager + 0x1F0, with enabled state at helper + 0x18.
-UI + 0x160 provides the pause count.
-
-Pointers are copied with bounded reads. Only native d3d11.dll COM views are
-queried; the renderer also checks device ownership, view formats and dimensions.
-No reference mod files, ReShade runtime or third-party shader implementation are
-bundled. Motion uses CGE's own shader and configuration.
-
-ABI and native vector convention references:
+https://github.com/ianpatt/skse64/blob/master/skse64/PluginAPI.h
+https://github.com/alandtse/CommonLibVR/blob/ng/include/REL/IDDB.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/Renderer.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/RenderTargetData.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/I/ImageSpaceManager.h
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/U/UI.h
-https://github.com/community-shaders/skyrim-community-shaders/blob/main/package/Shaders/Common/MotionBlur.hlsli
+https://github.com/community-shaders/skyrim-community-shaders/blob/main/src/Hooks.cpp
 
-## Inter menu font
+## Test-only components
 
-Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter).
-The unmodified variable font is distributed under SIL Open Font License 1.1;
-see licenses/Inter-OFL.txt. CGE renders its default regular face at 16px.
-
-Source commit: 0b58fb370093f9a9f4ff785d94405710b79de67c
-Source: https://github.com/google/fonts/tree/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter
-Font SHA256: 29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031
-
-Build/install copies assets/fonts/Inter.ttf to SKSE/Plugins/CGE/Fonts/Inter.ttf.
-The menu uses the embedded Dear ImGui font if this optional file is missing.
-No fonts are installed into Windows.
+The SMF fixture exports a synthetic host API to exercise the real CGE.dll,
+including delayed registration and unsupported API cases.
+The D3D11 relay is also a regression fixture.
+Neither component is installed or included in the mod archive.

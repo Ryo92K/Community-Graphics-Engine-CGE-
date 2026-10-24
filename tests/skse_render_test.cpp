@@ -1,77 +1,66 @@
 #include "skse_api.h"
+#include "settings.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
-#include <vector>
 #include <limits>
 namespace fs=std::filesystem;
 using Microsoft::WRL::ComPtr;
 void Check(bool value,const char* message){if(!value){std::printf("FAIL: %s\n",message);std::exit(1);}}
-template<class T>T Proc(HMODULE m,const char* name){auto fn=reinterpret_cast<T>(GetProcAddress(m,name));Check(fn!=nullptr,name);return fn;}
+template<class T>T Proc(HMODULE m,const char* name){auto p=reinterpret_cast<T>(GetProcAddress(m,name));Check(p!=nullptr,name);return p;}
 void Write(const fs::path& p,const std::string& text){std::ofstream f(p);Check(bool(f<<text),"Write fixture");}
-HWND physicalForeground{};
-SHORT physicalKeys[256]{};
-POINT physicalPointer{};
-BOOL WINAPI PhysicalCursor(LPPOINT point){*point=physicalPointer;return TRUE;}
-BOOL WINAPI PhysicalToClient(HWND,LPPOINT){return TRUE;}
-BOOL WINAPI PhysicalClient(HWND,LPRECT rect){*rect={0,0,1280,1440};return TRUE;}
-SHORT WINAPI PhysicalKey(int key){return key>=0 && key<256?physicalKeys[key]:0;}
-HWND WINAPI PhysicalForeground(){return physicalForeground;}
-BOOL WINAPI NoClipRead(LPRECT){return FALSE;}
-BOOL WINAPI NoClipWrite(const RECT*){return TRUE;}
-BOOL WINAPI VisibleCursor(PCURSORINFO cursor){cursor->flags=CURSOR_SHOWING;return TRUE;}
-HCURSOR WINAPI NoCursorChange(HCURSOR){return nullptr;}
-// Only the isolated test DLL's imports are overridden. No desktop keys or
-// cursor/clip mutations are sent to Windows.
-struct ImportOverride {
-    ULONG_PTR* slot{};ULONG_PTR previous{};
-    template<class T>ImportOverride(HMODULE module,const char* symbol,T replacement) {
-        auto* base=reinterpret_cast<unsigned char*>(module);
-        auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+reinterpret_cast<IMAGE_DOS_HEADER*>(base)->e_lfanew);
-        auto* imports=reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base+nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
-        for(;imports->Name && !slot;++imports) {
-            if(!imports->OriginalFirstThunk)continue;
-            auto* names=reinterpret_cast<IMAGE_THUNK_DATA64*>(base+imports->OriginalFirstThunk);
-            auto* entries=reinterpret_cast<IMAGE_THUNK_DATA64*>(base+imports->FirstThunk);
-            for(;names->u1.AddressOfData;++names,++entries) {
-                if(IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal))continue;
-                auto* name=reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base+names->u1.AddressOfData);
-                if(!strcmp(reinterpret_cast<const char*>(name->Name),symbol)){slot=&entries->u1.Function;break;}
-            }
-        }
-        Check(slot!=nullptr,"Physical-input test import exists");
-        previous=*slot;Store(reinterpret_cast<ULONG_PTR>(replacement));
-    }
-    void Store(ULONG_PTR value) {
-        DWORD prior{},ignored{};
-        Check(VirtualProtect(slot,sizeof(*slot),PAGE_READWRITE,&prior)!=FALSE,"Test import writable");
-        *slot=value;
-        Check(VirtualProtect(slot,sizeof(*slot),prior,&ignored)!=FALSE,"Test import protection restored");
-    }
-    ~ImportOverride(){Store(previous);}
-};
-
-unsigned forwarded{};
-LRESULT CALLBACK Window(HWND window,UINT type,WPARAM w,LPARAM l) {
-    if(type==WM_KEYDOWN && w=='W')++forwarded;
-    return IsWindowUnicode(window)?DefWindowProcW(window,type,w,l):DefWindowProcA(window,type,w,l);
-}
-
-// An executable fixture with the verified Skyrim prefix and a balanced return.
-// It exercises the production trampoline without executing game code.
 #pragma section(".cgeui",read,execute)
 __declspec(allocate(".cgeui")) const unsigned char interfaceFixture[]={
     0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50,
     0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0xc3
 };
 void InterfaceBoundary(){reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);}
+#pragma section(".cgehdr",read,execute)
+__declspec(allocate(".cgehdr")) const unsigned char tonemapFixture[0x190]{};
+__declspec(allocate(".cgehdr")) const unsigned char imageSpaceDrawFixture[64]{};
+unsigned hdrDelegations{};
+void* expectedHdrParameter=reinterpret_cast<void*>(0x1234);
+void NativeTonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
+    Check(manager==reinterpret_cast<void*>(0x5678) && effect==0x22 && source==1 && target==0x29 &&
+        parameters==expectedHdrParameter,"HDR delegate preserves all five native arguments");
+    ++hdrDelegations;
+}
+void PrepareTonemapFixture() {
+    auto* main=const_cast<unsigned char*>(tonemapFixture);
+    auto* draw=const_cast<unsigned char*>(imageSpaceDrawFixture);
+    DWORD oldMain{},oldDraw{},ignored{};
+    Check(VirtualProtect(main,sizeof(tonemapFixture),PAGE_EXECUTE_READWRITE,&oldMain)!=FALSE,"HDR fixture writable");
+    Check(VirtualProtect(draw,sizeof(imageSpaceDrawFixture),PAGE_EXECUTE_READWRITE,&oldDraw)!=FALSE,"Draw fixture writable");
+    memset(main,0x90,sizeof(tonemapFixture));
+    const unsigned char enter[]={0x53,0x48,0x83,0xec,0x30,0x48,0x8b,0xd9,
+        0x48,0x8b,0x44,0x24,0x60,0x48,0x89,0x44,0x24,0x20};
+    memcpy(main,enter,sizeof(enter));
+    const unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
+    memcpy(main+0x170,arguments,sizeof(arguments));main[0x178]=0xe8;
+    const auto offset=static_cast<std::int32_t>(draw-(main+0x17d));memcpy(main+0x179,&offset,4);
+    const unsigned char leave[]={0x48,0x83,0xc4,0x30,0x5b,0xc3};memcpy(main+0x17d,leave,sizeof(leave));
+    const unsigned char prefix[]={0x4c,0x8b,0xdc,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x70,
+        0x48,0x83,0xc4,0x70,0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d};
+    memcpy(draw,prefix,sizeof(prefix));
+    draw[25]=0xff;draw[26]=0x25;memset(draw+27,0,4);
+    auto* target=reinterpret_cast<void*>(NativeTonemap);memcpy(draw+31,&target,8);
+    VirtualProtect(main,sizeof(tonemapFixture),oldMain,&ignored);
+    VirtualProtect(draw,sizeof(imageSpaceDrawFixture),oldDraw,&ignored);
+    FlushInstructionCache(GetCurrentProcess(),main,sizeof(tonemapFixture));
+    FlushInstructionCache(GetCurrentProcess(),draw,sizeof(imageSpaceDrawFixture));
+}
+void TonemapBoundary() {
+    using Draw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,void*);
+    reinterpret_cast<Draw>(const_cast<unsigned char*>(tonemapFixture))(reinterpret_cast<void*>(0x5678),0x22,1,0x29,expectedHdrParameter);
+}
 alignas(8) unsigned char playerFixture[0x80]{};
 alignas(8) unsigned char cellFixture[0x50]{};
 void* playerSingletonFixture=playerFixture;
@@ -106,452 +95,210 @@ void WriteLibrary(const fs::path& path) {
     library[24+403521]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&playerSingletonFixture)-
         reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
     const std::pair<unsigned,const void*> motionEntries[]={
-        {411393,rendererFixture},{414660,&imageSpaceSingletonFixture},{400327,&uiSingletonFixture}};
+        {105674,tonemapFixture},{105676,imageSpaceDrawFixture},{411393,rendererFixture},{414660,&imageSpaceSingletonFixture},{400327,&uiSingletonFixture}};
     for(auto [id,address]:motionEntries)library[24+id]=static_cast<std::uint32_t>(
         reinterpret_cast<std::uintptr_t>(address)-reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
     std::ofstream file(path,std::ios::binary);
     file.write(reinterpret_cast<const char*>(library.data()),static_cast<std::streamsize>(library.size()*4));
     Check(bool(file),"Write Address Library fixture");
 }
-int wmain(int argc,wchar_t** argv) {
-    Check(argc==4,"DLL, fixture and window mode");
-    const std::wstring mode=argv[3];
-    bool ansi=mode==L"--ansi";
-    const bool rejectScene=mode==L"--missing-library" || mode==L"--invalid-library" || mode==L"--hook-conflict";
-    fs::path root=fs::absolute(argv[2])/"SKSE"/"Plugins";fs::create_directories(root);
-    fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
-    fs::create_directories(root/"CGE"/"Fonts");
-    fs::copy_file(fs::absolute(argv[1]).parent_path()/"CGE"/"Fonts"/"Inter.ttf",
-        root/"CGE"/"Fonts"/"Inter.ttf",fs::copy_options::overwrite_existing);
-    if(mode==L"--missing-font")fs::remove(root/"CGE"/"Fonts"/"Inter.ttf");
-    const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,sizeof(formId));SetCell(false);SetGameHour(12);
-    const void* temporal=temporalFixture;memcpy(imageSpaceFixture+0x1f0,&temporal,sizeof(temporal));temporalFixture[0x18]=1;
-    const auto library=root/"versionlib-1-7-104-0.bin";
-    WriteLibrary(library);
-    if(mode==L"--missing-library")fs::remove(library);
-    if(mode==L"--invalid-library")Write(library,"invalid");
-    if(mode==L"--hook-conflict") {
-        DWORD old{},ignored{};
-        Check(VirtualProtect(const_cast<unsigned char*>(interfaceFixture),sizeof(interfaceFixture),PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Fixture writable");
-        *const_cast<unsigned char*>(interfaceFixture)=0x90;
-        VirtualProtect(const_cast<unsigned char*>(interfaceFixture),sizeof(interfaceFixture),old,&ignored);
-    }
-    auto config=root/"CGE.ini";
-    auto module=LoadLibraryExW((root/"CGE.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
-    Check(module!=nullptr,"Load CGE");
-    for(const auto* name:{"ENBGetVersion","ENBGetSDKVersion","ENBGetParameter","DirtyHack","TwInit"})
-        Check(!GetProcAddress(module,name),"No legacy renderer exports");
-    Check(!GetModuleHandleW(L"KiENBExtender.dll") && !GetModuleHandleW(L"ENBHelperSE.dll"),"No external helpers");
 
-    Check(!GetProcAddress(module,"D3D11CreateDeviceAndSwapChain"),"SKSE plugin does not export proxy entry points");
-    auto query=Proc<bool(*)(const cge::skse::Interface*,cge::skse::Info*)>(module,"SKSEPlugin_Query");
-    auto load=Proc<bool(*)(const cge::skse::Interface*)>(module,"SKSEPlugin_Load");
-    auto* metadata=Proc<const cge::skse::Metadata*>(module,"SKSEPlugin_Version");
-    Check(metadata->dataVersion==1 && metadata->compatibleVersions[0]==cge::skse::Runtime &&
-        metadata->compatibleVersions[1]==0 && metadata->versionIndependence==0 && metadata->versionIndependenceEx==0,"Exact declared runtime, no false universal compatibility");
-    cge::skse::Interface api{0x02030010,cge::skse::Runtime,0,0};
-    cge::skse::Info info{};
-    Check(!load(nullptr),"Reject null loader interface");
-    auto wrong=api;wrong.runtimeVersion=0x01061170;
-    Check(!query(&wrong,&info) && !load(&wrong),"Reject unsupported runtime");
-    wrong=api;wrong.isEditor=1;Check(!load(&wrong),"Reject editor");
-    Check(query(&api,&info) && info.infoVersion==1 && info.name,"Valid query metadata");
-    Check(load(&api),"SKSE installs creation hook in the executable");
-    Check(load(&api),"Repeat Load is idempotent");
-    auto create=&D3D11CreateDeviceAndSwapChain;
-
-    auto instance=GetModuleHandleW(nullptr);
-    HWND window{};
-    if(ansi) {
-        WNDCLASSA wc{};wc.lpfnWndProc=Window;wc.hInstance=instance;wc.lpszClassName="CGEInputA";RegisterClassA(&wc);
-        window=CreateWindowA(wc.lpszClassName,"CGE",WS_OVERLAPPEDWINDOW,0,0,640,720,nullptr,nullptr,instance,nullptr);
-    }else {
-        WNDCLASSW wc{};wc.lpfnWndProc=Window;wc.hInstance=instance;wc.lpszClassName=L"CGEInputW";RegisterClassW(&wc);
-        window=CreateWindowW(wc.lpszClassName,L"CGE",WS_OVERLAPPEDWINDOW,0,0,640,720,nullptr,nullptr,instance,nullptr);
-    }
-    Check(window!=nullptr,"Create hidden window");
-    ImportOverride focus(module,"GetForegroundWindow",PhysicalForeground);
-    ImportOverride keyboard(module,"GetAsyncKeyState",PhysicalKey);
-    ImportOverride clipRead(module,"GetClipCursor",NoClipRead);
-    ImportOverride clipWrite(module,"ClipCursor",NoClipWrite);
-    ImportOverride cursorRead(module,"GetCursorInfo",VisibleCursor);
-    ImportOverride cursorWrite(module,"SetCursor",NoCursorChange);
-    ImportOverride position(module,"GetCursorPos",PhysicalCursor);
-    ImportOverride coordinates(module,"ScreenToClient",PhysicalToClient);
-    ImportOverride clientArea(module,"GetClientRect",PhysicalClient);
-    auto key=[&](WPARAM value){SendMessageW(window,WM_KEYDOWN,value,0);SendMessageW(window,WM_KEYUP,value,0);};
-    for(unsigned cycle=0;cycle<(rejectScene?1u:13u);++cycle) {
-        if(cycle==0)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=-1\nContrast=1\nSaturation=1\n[Detail]\nSharpen=0\n");
-        if(cycle==2)Write(config,"[CGE]\nEnabled=false\n[Color]\nExposureStops=2\n");
-        if(cycle==3)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=0\nSaturation=0\n");
-        if(cycle==4)Write(config,"[CGE]\nEnabled=true\n[Color]\nContrast=0\n");
-        if(cycle==5)Write(config,"[CGE]\nEnabled=true\n[Detail]\nSharpen=1\n");
-        if(cycle==6)Write(config,"[Color]\nGamma=2\n");
-        if(cycle==7)Write(config,"[Color]\nTemperature=100\n");
-        if(cycle==8)Write(config,"[Color]\nTemperature=-100\n");
-        if(cycle==9)Write(config,"[Color]\nExposureStops=0\n[Profiles]\nSeparate=true\nTransitionSeconds=0\n[Exterior]\nExposureStops=-1\n[Interior]\nExposureStops=1\n");
-        if(cycle==10)Write(config,"[Profiles]\nSeparate=true\nTransitionSeconds=0\n[ExteriorDay]\nExposureStops=-1\n[ExteriorNight]\nExposureStops=1\n[Interior]\nExposureStops=0\n");
-        if(cycle==11)Write(config,"[MotionBlur]\nEnabled=true\nStrength=0.5\nMaxRadius=4\nSamples=8\n");
-        DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=640;desc.BufferDesc.Height=720;
-        desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;
-        desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=window;
-        desc.Windowed=TRUE;desc.SwapEffect=DXGI_SWAP_EFFECT_SEQUENTIAL;
-        ComPtr<IDXGISwapChain> chain;ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
-        Check(SUCCEEDED(create(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&desc,&chain,&device,nullptr,&context)),"Create WARP chain");
-        Check((IsWindowUnicode(window)!=FALSE)==!ansi,"Preserve window encoding");
-        if(cycle==0) {
-            std::ifstream fontLog(root/"CGE.log");std::string logged((std::istreambuf_iterator<char>(fontLog)),{});
-            const char* expectedFont=mode==L"--missing-font"?"CGE menu font: embedded fallback 16px":"CGE menu font: Inter 16px";
-            Check(logged.find(expectedFont)!=std::string::npos,"Menu uses the bundled font or safe fallback");
-        }
-        const auto motionLogStart=fs::file_size(root/"CGE.log");
-        ComPtr<ID3D11Texture2D> motionVelocity,motionDepth;
-        ComPtr<ID3D11ShaderResourceView> motionVelocityView,motionDepthView;
-        if(cycle>=11) {
-            D3D11_TEXTURE2D_DESC md{};md.Width=640;md.Height=720;md.ArraySize=md.MipLevels=1;md.SampleDesc.Count=1;
-            md.Format=DXGI_FORMAT_R32G32_FLOAT;md.BindFlags=D3D11_BIND_SHADER_RESOURCE;
-            Check(SUCCEEDED(device->CreateTexture2D(&md,nullptr,&motionVelocity)),"Native motion fixture texture");
-            device->CreateShaderResourceView(motionVelocity.Get(),nullptr,&motionVelocityView);
-            std::vector<float> data(640*720*2);
-            for(unsigned i=0;i<640*720;++i)data[i*2]=0.01f;
-            context->UpdateSubresource(motionVelocity.Get(),0,nullptr,data.data(),640*8,0);
-            md.Format=DXGI_FORMAT_R32_FLOAT;
-            Check(SUCCEEDED(device->CreateTexture2D(&md,nullptr,&motionDepth)),"Native depth fixture texture");
-            device->CreateShaderResourceView(motionDepth.Get(),nullptr,&motionDepthView);
-            data.assign(640*720,0.5f);context->UpdateSubresource(motionDepth.Get(),0,nullptr,data.data(),640*4,0);
-            auto* velocity=motionVelocityView.Get();auto* depth=motionDepthView.Get();
-            memcpy(rendererFixture+0xbc0,&velocity,sizeof(velocity));memcpy(rendererFixture+0x20a0,&depth,sizeof(depth));
-        }
-        ComPtr<ID3D11Texture2D> buffer;ComPtr<ID3D11RenderTargetView> target;
-        auto buffers=[&] {Check(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer))),"Backbuffer");Check(SUCCEEDED(device->CreateRenderTargetView(buffer.Get(),nullptr,&target)),"Output view");};
-        buffers();
-        bool drawScene=!rejectScene;
-        auto present=[&] {
-            const float color[]={0.8f,0.4f,0.2f,0.3f};context->ClearRenderTargetView(target.Get(),color);
-            if(cycle==5) {
-                D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);
-                std::vector<unsigned char> image(static_cast<size_t>(td.Width)*td.Height*4,102);
-                for(size_t pixel=0;pixel<image.size()/4;++pixel)image[pixel*4+3]=77;
-                auto offset=(static_cast<size_t>(td.Height/2)*td.Width+td.Width/2)*4;
-                image[offset]=204;image[offset+1]=102;image[offset+2]=51;
-                context->UpdateSubresource(buffer.Get(),0,nullptr,image.data(),td.Width*4,0);
-            }
-            auto* rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);
-            D3D11_VIEWPORT sentinel={3,4,19,20,0,1};context->RSSetViewports(1,&sentinel);
-            if(drawScene){InterfaceBoundary();InterfaceBoundary();}
-            const unsigned char hud[]={17,231,93,77};
-            D3D11_BOX hudRegion{0,0,0,1,1,1};
-            context->UpdateSubresource(buffer.Get(),0,&hudRegion,hud,4,0);
-            Check(SUCCEEDED(chain->Present(0,0)),"Present CGE");
-            UINT n=1;D3D11_VIEWPORT restored{};context->RSGetViewports(&n,&restored);
-            Check(n==1 && restored.TopLeftX==3 && restored.Width==19,"Restore game viewport");
-            ComPtr<ID3D11RenderTargetView> actual;context->OMGetRenderTargets(1,&actual,nullptr);
-            Check(actual.Get()==target.Get(),"Restore game output binding");
-        };
-        auto pixel=[&](int r,int g,int b) {
-            D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-            ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Readback");
-            context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-            Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Map pixels");
-            auto* c=static_cast<unsigned char*>(mapped.pData)+mapped.RowPitch*(td.Height/2)+4*(td.Width/2);
-            if(abs(int(c[0])-r)>2 || abs(int(c[1])-g)>2 || abs(int(c[2])-b)>2 || abs(int(c[3])-77)>2) {
-                std::printf("Pixel=%u,%u,%u,%u expected=%d,%d,%d,77\n",c[0],c[1],c[2],c[3],r,g,b);Check(false,"CGE native pass pixels and alpha");
-            }
-            auto* hud=static_cast<unsigned char*>(mapped.pData);
-            Check(hud[0]==17 && hud[1]==231 && hud[2]==93 && hud[3]==77,"HUD drawn after scene effects stays unchanged");
-            context->Unmap(staging.Get(),0);
-        };
-
-        auto feedbackHash=[&] {
-            D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-            ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Feedback readback");
-            context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-            Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Feedback map");
-            std::uint64_t hash=1469598103934665603ull;
-            for(unsigned y=486;y<514;++y)for(unsigned x=36;x<140;++x) {
-                auto* c=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y+4*x;
-                for(unsigned channel=0;channel<3;++channel){hash^=c[channel];hash*=1099511628211ull;}
-            }
-            context->Unmap(staging.Get(),0);return hash;
-        };
-        auto captureMenu=[&](const fs::path& path) {
-            if(ansi)return;
-                D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-                ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Menu preview texture");
-                context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-                Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Menu preview map");
-                BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};
-                info.biSize=sizeof(info);info.biWidth=static_cast<LONG>(td.Width);info.biHeight=-static_cast<LONG>(td.Height);
-                info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;
-                header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(info);
-                header.bfSize=header.bfOffBits+td.Width*td.Height*4;
-                std::ofstream image(path,std::ios::binary);
-                image.write(reinterpret_cast<const char*>(&header),sizeof(header));
-                image.write(reinterpret_cast<const char*>(&info),sizeof(info));
-                std::vector<unsigned char> row(td.Width*4);
-                for(unsigned y=0;y<td.Height;++y) {
-                    auto* source=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y;
-                    for(unsigned x=0;x<td.Width;++x){row[x*4]=source[x*4+2];row[x*4+1]=source[x*4+1];row[x*4+2]=source[x*4];row[x*4+3]=source[x*4+3];}
-                    image.write(reinterpret_cast<const char*>(row.data()),static_cast<std::streamsize>(row.size()));
-                }
-                context->Unmap(staging.Get(),0);
-        };
-        present();
-        if(rejectScene) {
-            pixel(204,102,51);
-            std::ifstream log(root/"CGE.log");std::string text((std::istreambuf_iterator<char>(log)),{});
-            Check(text.find("scene hook unavailable")!=std::string::npos,"Missing/invalid/conflicting scene hook is reported");
-        }else if(cycle==0) {
-            pixel(102,51,26);
-            drawScene=false;present();pixel(204,102,51);
-            drawScene=true;present();pixel(102,51,26);physicalForeground=window;present();
-            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(204,102,51);
-            present();pixel(204,102,51);
-            physicalKeys[VK_F8]=0;present();
-            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(102,51,26);
-            physicalKeys[VK_F8]=0;present();
-            physicalKeys[VK_F8]=SHORT(0x8000);SendMessageW(window,WM_KEYDOWN,VK_F8,0);present();pixel(204,102,51);
-            SendMessageW(window,WM_KEYDOWN,VK_F8,0);present();pixel(204,102,51);
-            physicalKeys[VK_F8]=0;SendMessageW(window,WM_KEYUP,VK_F8,0);present();
-            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(102,51,26);
-            physicalKeys[VK_F8]=0;present();
-            physicalKeys[VK_F10]=SHORT(0x8000);present();physicalKeys[VK_F10]=0;present();
-            key('W');Check(forwarded==0,"Menu captures window keyboard input");
-            auto click=[&](int x,int y) {
-                physicalPointer={x*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();
-                physicalKeys[VK_LBUTTON]=0;present();
-            };
-
-            auto setting=[&](const char* name) {
-                std::ifstream input(config);std::string contents((std::istreambuf_iterator<char>(input)),{});
-                auto at=contents.find(std::string(name)+"=");Check(at!=std::string::npos,"Saved setting exists");
-                auto value=contents.substr(at+strlen(name)+1);
-                if(value.starts_with("true"))return 1.0f;
-                if(value.starts_with("false"))return 0.0f;
-                return std::stof(value);
-            };
-            click(466,326);
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-            physicalKeys[VK_NUMPAD2]=SHORT(0x8000);present();
-            physicalKeys[VK_NUMPAD2]=0;present();
-            physicalKeys[VK_RETURN]=SHORT(0x8000);present();
-            physicalKeys[VK_RETURN]=0;present();
-            key(VK_F6);present();
-            Check(setting("Gamma")==2,"Precise keyboard entry commits actual gamma");
-
-            click(466,326);
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-            physicalKeys[VK_NUMPAD9]=SHORT(0x8000);
-            SendMessageW(window,WM_KEYDOWN,VK_NUMPAD9,0);
-            SendMessageW(window,WM_CHAR,'9',LPARAM(0x490000));present();
-            physicalKeys[VK_NUMPAD9]=0;SendMessageW(window,WM_KEYUP,VK_NUMPAD9,0);present();
-            physicalKeys[VK_RETURN]=SHORT(0x8000);present();
-            physicalKeys[VK_RETURN]=0;present();
-            key(VK_F6);present();Check(setting("Gamma")==2.5f,"Precise entry respects the allowed range");
-            click(466,326);
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-            for(int digit:{VK_NUMPAD1,VK_DECIMAL,VK_NUMPAD2,VK_NUMPAD5}) {
-                physicalKeys[digit]=SHORT(0x8000);
-                if(digit==VK_NUMPAD1) {
-                    SendMessageW(window,WM_KEYDOWN,digit,LPARAM(0x4f0000));
-                    SendMessageW(window,WM_CHAR,'1',LPARAM(0x4f0000));
-                }
-                present();physicalKeys[digit]=0;present();
-            }
-            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
-            key(VK_F6);present();Check(setting("Gamma")==1.25f,"Physical numeric and decimal input works without WM_CHAR");
-            click(466,326);
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-            for(wchar_t character:std::wstring(L"1.75")) {
-                const auto mapped=VkKeyScanExW(character,GetKeyboardLayout(0));
-                Check(mapped!=-1,"Current keyboard layout can type numeric value");
-                const int vk=mapped&255;
-                physicalKeys[VK_SHIFT]=(mapped&0x100)?SHORT(0x8000):0;
-                physicalKeys[VK_CONTROL]=(mapped&0x200)?SHORT(0x8000):0;
-                physicalKeys[VK_MENU]=(mapped&0x400)?SHORT(0x8000):0;
-                physicalKeys[vk]=SHORT(0x8000);present();
-                physicalKeys[vk]=physicalKeys[VK_SHIFT]=physicalKeys[VK_CONTROL]=physicalKeys[VK_MENU]=0;present();
-            }
-            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
-            // Let ImGui consume interleaved Shift/text/Enter events before saving.
-            present();present();present();
-            key(VK_F6);present();Check(setting("Gamma")==1.75f,"Number-row and punctuation follow the active keyboard layout");
-            click(552,326);key(VK_F6);present();
-            Check(setting("Gamma")==1 && setting("ExposureStops")==-1,"Per-control reset leaves other values intact");
-            click(350,452);
-            physicalKeys[VK_F6]=SHORT(0x8000);present();
-            physicalKeys[VK_F6]=0;present();
-            physicalKeys[VK_F11]=SHORT(0x8000);present();
-            physicalKeys[VK_F11]=0;present();
-            key(VK_F6);present();
-            Check(setting("ToggleKey")==122,"Custom compare key is saved; reserved keys do not finish binding");
-            Check(setting("Enabled")==1,"Binding capture does not accidentally toggle effects");
-
-            click(350,452);key(VK_ESCAPE);present();key(VK_F6);present();
-            Check(setting("ToggleKey")==122,"Escape cancels rebinding without changing the shortcut");
-            click(44,74); // The visible On/Off button bypasses the entire pass.
-
-            key(VK_F6);present();
-            std::ifstream file(config);std::string saved((std::istreambuf_iterator<char>(file)),{});
-            Check(saved.find("Enabled=false")!=std::string::npos,"Own checkbox and Save change CGE.ini");
-
-            file.close();
-            const auto savedFeedback=feedbackHash();
-            const auto attributes=GetFileAttributesW(config.c_str());
-            Check(attributes!=INVALID_FILE_ATTRIBUTES && SetFileAttributesW(config.c_str(),attributes|FILE_ATTRIBUTE_READONLY),"Make test settings read-only");
-            key(VK_F6);present();
-            const auto failedFeedback=feedbackHash();
-            const bool temporaryRemoved=!fs::exists(config.wstring()+L".tmp");
-            Check(SetFileAttributesW(config.c_str(),attributes)!=FALSE,"Restore test settings attributes");
-            Check(failedFeedback!=savedFeedback,"Save failure changes visible button feedback");
-            Check(temporaryRemoved && setting("Enabled")==0,"Failed save preserves settings and cleans its temporary file");
-            key(VK_F6);present();
-            Check(feedbackHash()!=failedFeedback,"Successful retry clears failure feedback");
-            captureMenu(root/L"CGE-menu.bmp");
-            key(VK_ESCAPE);present();pixel(204,102,51);
-            physicalKeys[VK_F11]=SHORT(0x8000);present();pixel(102,51,26);
-            present();pixel(102,51,26);
-            physicalKeys[VK_F11]=0;present();
-            physicalKeys[VK_F11]=SHORT(0x8000);present();pixel(204,102,51);
-            physicalKeys[VK_F11]=0;present();
-            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(204,102,51);
-            physicalKeys[VK_F8]=0;present();
-            key('W');Check(forwarded==1,"Close releases window keyboard input");
-            physicalForeground=nullptr;
-        }else if(cycle==1) {
-            pixel(204,102,51);key(VK_F10);key(VK_F7);present();key(VK_ESCAPE);present();pixel(204,102,51);
-        }else if(cycle==2)pixel(204,102,51);
-        else if(cycle==3)pixel(120,120,120);
-        else if(cycle==4)pixel(128,128,128);
-        else if(cycle==5)pixel(255,102,0);
-        else if(cycle==6)pixel(228,161,114);
-        else if(cycle==7)pixel(243,102,43);
-        else if(cycle==8)pixel(172,102,61);
-        else if(cycle==9) {
-            pixel(102,51,26);
-            SetCell(true);present();pixel(255,204,102);
-            void* missing=nullptr;memcpy(playerFixture+0x60,&missing,sizeof(missing));
-            present();pixel(255,204,102);
-            SetCell(false);present();pixel(102,51,26);
-            physicalForeground=window;key(VK_F10);present();
-            auto clickProfile=[&](int x,int y) {
-                physicalPointer={x*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();
-                physicalKeys[VK_LBUTTON]=0;present();
-            };
-            clickProfile(96,160);clickProfile(466,118);
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-            for(int digit:{VK_SUBTRACT,VK_NUMPAD2}) {
-                physicalKeys[digit]=SHORT(0x8000);present();physicalKeys[digit]=0;present();
-            }
-            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
-            present();present();key(VK_F6);present();
-            std::ifstream savedFile(config);std::string contents((std::istreambuf_iterator<char>(savedFile)),{});
-            Check(contents.find("[Interior]\nExposureStops=-2")!=std::string::npos &&
-                contents.find("[ExteriorDay]\nExposureStops=-1")!=std::string::npos,"Editing and saving one profile leaves the other unchanged");
-            captureMenu(root/L"CGE-profiles-menu.bmp");
-            key(VK_ESCAPE);present();pixel(102,51,26);
-            SetCell(true);present();pixel(51,26,13);
-            playerSingletonFixture=nullptr;present();pixel(51,26,13);
-            playerSingletonFixture=playerFixture;
-            void* invalid=reinterpret_cast<void*>(1);memcpy(playerFixture+0x60,&invalid,sizeof(invalid));
-            present();pixel(51,26,13);
-            SetCell(false);present();pixel(102,51,26);
-            key(VK_F10);present();
-            clickProfile(220,74);key(VK_ESCAPE);present();pixel(204,102,51);
-            key(VK_F10);present();clickProfile(220,74);key(VK_ESCAPE);present();pixel(102,51,26);
-            physicalForeground=nullptr;
-        }
-        if(cycle==10) {
-            pixel(102,51,26);
-            SetGameHour(23);present();pixel(255,204,102);
-            SetGameHour(20);present();pixel(204,102,51);
-            SetGameHour(6);present();pixel(204,102,51);
-            SetGameHour(24);present();pixel(255,204,102);
-            SetGameHour(std::numeric_limits<float>::quiet_NaN());present();pixel(255,204,102);
-            calendarSingletonFixture=nullptr;present();pixel(255,204,102);
-            calendarSingletonFixture=calendarFixture;
-            SetGameHour(12);present();pixel(102,51,26);
-            SetCell(true);present();pixel(204,102,51);
-            SetGameHour(23);present();pixel(204,102,51);
-            SetCell(false);present();pixel(255,204,102);
-            physicalForeground=window;key(VK_F10);present();
-            auto setTiming=[&](int y,int digit) {
-                physicalPointer={96*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();
-                physicalKeys[VK_LBUTTON]=0;present();
-                physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
-                physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-                physicalKeys[digit]=SHORT(0x8000);present();physicalKeys[digit]=0;present();
-                physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
-                present();present();
-            };
-            setTiming(390,VK_NUMPAD7);setTiming(450,VK_NUMPAD9);setTiming(330,VK_NUMPAD2);
-            key(VK_F6);present();
-            std::ifstream timingFile(config);std::string timing((std::istreambuf_iterator<char>(timingFile)),{});
-            Check(timing.find("DayHour=7")!=std::string::npos &&
-                timing.find("NightHour=13")!=std::string::npos &&
-                timing.find("TransitionSeconds=2")!=std::string::npos,"Timing fields accept keyboard values, clamp invalid evening hours, and save");
-            captureMenu(root/L"CGE-day-night-menu.bmp");
-            key(VK_ESCAPE);present();physicalForeground=nullptr;
-            SetGameHour(12);
-        }
-        if(cycle>=11) {
-            auto motionLog=[&] {
-                std::ifstream file(root/"CGE.log");file.seekg(static_cast<std::streamoff>(motionLogStart));
-                return std::string((std::istreambuf_iterator<char>(file)),{});
-            };
-            present();present();present();pixel(204,102,51);
-            Check(motionLog().find("native motion pass active")!=std::string::npos,"Production SKSE adapter acquires native motion resources");
-            if(cycle==11) {
-                temporalFixture[0x18]=0;present();pixel(204,102,51);
-                Check(motionLog().find("Native TAA required")!=std::string::npos,"TAA disabled bypasses motion");
-                temporalFixture[0x18]=1;
-                std::uint32_t paused=1;memcpy(uiFixture+0x160,&paused,sizeof(paused));present();
-                Check(motionLog().find("CGE motion blur: Paused")!=std::string::npos,"Paused game bypasses motion");
-                paused=0;memcpy(uiFixture+0x160,&paused,sizeof(paused));
-                void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+0x20a0,&invalid,sizeof(invalid));present();
-                Check(motionLog().find("Motion data unavailable")!=std::string::npos,"Invalid native COM pointer is safely rejected");
-                auto* depth=motionDepthView.Get();memcpy(rendererFixture+0x20a0,&depth,sizeof(depth));
-                physicalForeground=window;key(VK_F10);present();
-                auto clickMotion=[&](int x,int y) {
-                    physicalPointer={x*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();physicalKeys[VK_LBUTTON]=0;present();
-                };
-                clickMotion(96,268);clickMotion(540,118);key(VK_F6);present();
-                {std::ifstream f(config);std::string text((std::istreambuf_iterator<char>(f)),{});
-                 Check(text.find("[MotionBlur]\nEnabled=false")!=std::string::npos,"Motion menu toggle is saved");}
-                clickMotion(540,118);clickMotion(466,170);
-                physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
-                for(int digit:{VK_NUMPAD1,VK_DECIMAL,VK_NUMPAD2,VK_NUMPAD5}) {
-                    physicalKeys[digit]=SHORT(0x8000);present();physicalKeys[digit]=0;present();
-                }
-                physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();present();present();
-                clickMotion(546,292);key(VK_F6);present();
-                {std::ifstream f(config);std::string text((std::istreambuf_iterator<char>(f)),{});
-                 Check(text.find("[MotionBlur]\nEnabled=true")!=std::string::npos &&
-                    text.find("Strength=1.25")!=std::string::npos && text.find("Samples=16")!=std::string::npos,
-                    "Motion strength, quality and toggle persist through Save");}
-                clickMotion(380,404);key(VK_F6);present();
-                {std::ifstream f(config);std::string text((std::istreambuf_iterator<char>(f)),{});
-                 Check(text.find("Strength=1.5")!=std::string::npos && text.find("MaxRadius=48")!=std::string::npos &&
-                    text.find("Samples=16")!=std::string::npos,"Strong comparison applies and saves stronger motion settings");}
-                captureMenu(root/L"CGE-motion-menu.bmp");
-                key(VK_ESCAPE);present();physicalForeground=nullptr;
-            }
-        }
-        context->OMSetRenderTargets(0,nullptr,nullptr);target.Reset();buffer.Reset();
-        Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"Resize without retained game resources");
-        buffers();present();
-        if(cycle==3)pixel(120,120,120);
-        if(cycle==5)pixel(255,102,0);
-        context->ClearState();target.Reset();buffer.Reset();chain.Reset();
-        Check(reinterpret_cast<WNDPROC>(ansi?GetWindowLongPtrA(window,GWLP_WNDPROC):GetWindowLongPtrW(window,GWLP_WNDPROC))==Window,"Restore original procedure");
-        context.Reset();device.Reset();
-    }
-    DestroyWindow(window);
-    std::puts("PASS: SKSE load, executable IAT interception, CGE native pixels, alpha, bypass, saturation, state, resize, own menu, Save and reset.");
+void(*listener)(cge::skse::Message*){};
+unsigned handleCalls{};
+bool Listen(std::uint32_t handle,const char* sender,void(*callback)(cge::skse::Message*)) {
+    Check(handle==7 && !strcmp(sender,"SKSE"),"SKSE message subscription");listener=callback;return true;
 }
-
+cge::skse::Messaging messaging{2,Listen,nullptr,nullptr};
+void* Query(std::uint32_t id){return id==5?&messaging:nullptr;}
+std::uint32_t Handle(){++handleCalls;return 7;}
+int wmain(int argc,wchar_t** argv) {
+    Check(argc==5,"DLL, fixture, mode and test framework");
+    const std::wstring mode=argv[3];
+    const bool missing=mode==L"--missing-framework",old=mode==L"--old-framework",
+        incomplete=mode==L"--incomplete-framework",sceneMissing=mode==L"--missing-library",
+        invalidLibrary=mode==L"--invalid-library",sceneConflict=mode==L"--hook-conflict",
+        hdrConflict=mode==L"--hdr-hook-conflict";
+    const bool frameworkReady=!missing && !old && !incomplete;
+    const bool sceneReady=!sceneMissing && !invalidLibrary && !sceneConflict;
+    const auto root=fs::absolute(argv[2])/L"SKSE"/L"Plugins"/L"CGE-\u03b3";
+    fs::create_directories(root);fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
+    auto config=root/"CGE.ini";
+    Write(config,"[Color]\nExposureStops=-1\n[Input]\nToggleKey=119\n");
+    PrepareTonemapFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
+    SetCell(false);SetGameHour(12);
+    const void* temporal=temporalFixture;memcpy(imageSpaceFixture+0x1f0,&temporal,sizeof(temporal));temporalFixture[0x18]=1;
+    const auto library=root/"versionlib-1-7-104-0.bin";WriteLibrary(library);
+    if(sceneMissing)fs::remove(library);
+    if(invalidLibrary)Write(library,"invalid");
+    auto corrupt=[](const unsigned char* address){
+        DWORD oldProtection{},ignored{};auto* p=const_cast<unsigned char*>(address);
+        Check(VirtualProtect(p,1,PAGE_EXECUTE_READWRITE,&oldProtection)!=FALSE,"Fixture writable");
+        *p=0x90;VirtualProtect(p,1,oldProtection,&ignored);
+    };
+    if(sceneConflict)corrupt(interfaceFixture);
+    if(hdrConflict)corrupt(tonemapFixture+0x178);
+    auto module=LoadLibraryExW((root/"CGE.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+    Check(module!=nullptr,"Load production CGE.dll");
+    auto load=Proc<bool(*)(const cge::skse::Interface*)>(module,"SKSEPlugin_Load");
+    cge::skse::Interface api{0x02030010,cge::skse::Runtime,0,0,Query,Handle};
+    auto wrong=api;wrong.runtimeVersion=0x01061170;
+    Check(!load(&wrong) && !load(nullptr),"Unsupported runtime refused");
+    Check(load(&api) && load(&api) && listener && handleCalls==1,"Creation hook and one SKSE listener");
+    HMODULE framework{};
+    using Render=bool(*)(const char*);
+    Render render{};
+    void(*action)(int,const char*,float){};
+    void(*blocking)(bool){};
+    unsigned(*pageCount)(){};
+    if(!missing) {
+        fs::copy_file(argv[4],root/"SKSEMenuFramework.dll",fs::copy_options::overwrite_existing);
+        framework=LoadLibraryExW((root/"SKSEMenuFramework.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
+        Check(framework!=nullptr,"Load test framework after CGE");
+        pageCount=Proc<unsigned(*)()>(framework,"TestPageCount");
+        action=Proc<void(*)(int,const char*,float)>(framework,"TestAction");
+        render=Proc<Render>(framework,"TestRender");
+        blocking=Proc<void(*)(bool)>(framework,"TestSetBlocking");
+        if(old)Proc<void(*)(float)>(framework,"TestSetVersion")(2.0f);
+        Check(pageCount()==0,"No premature registration during plugin load");
+    }
+    cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
+    if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
+    message.type=1;listener(&message);listener(&message);
+    if(pageCount)Check(pageCount()==(frameworkReady?5u:0u),"Validate API before registering exactly five pages");
+    const char* shared="Community Graphics Engine/Effects/Color";
+    const char* bloom="Community Graphics Engine/Effects/Bloom";
+    if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
+    HWND window=CreateWindowW(L"STATIC",L"CGE SMF test",WS_OVERLAPPEDWINDOW,0,0,128,128,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    Check(window!=nullptr,"Hidden window");
+    const auto originalWindowProc=GetWindowLongPtrW(window,GWLP_WNDPROC);
+    DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=desc.BufferDesc.Height=64;
+    desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc.BufferCount=1;desc.OutputWindow=window;desc.Windowed=TRUE;desc.SwapEffect=DXGI_SWAP_EFFECT_SEQUENTIAL;
+    ComPtr<IDXGISwapChain> chain;ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
+    Check(SUCCEEDED(D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,
+        &desc,&chain,&device,nullptr,&context)),"WARP device through production IAT hook");
+    Check(GetWindowLongPtrW(window,GWLP_WNDPROC)==originalWindowProc,"CGE never replaces the game's window procedure");
+    ComPtr<ID3D11Texture2D> buffer,readback;ComPtr<ID3D11RenderTargetView> output;
+    auto buffers=[&] {
+        Check(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer))),"Backbuffer");
+        device->CreateRenderTargetView(buffer.Get(),nullptr,&output);
+        D3D11_TEXTURE2D_DESC d{};buffer->GetDesc(&d);d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        Check(SUCCEEDED(device->CreateTexture2D(&d,nullptr,&readback)),"LDR staging");
+    };buffers();
+    ComPtr<ID3D11Texture2D> hdr,hdrReadback,velocity,depth;
+    ComPtr<ID3D11ShaderResourceView> hdrView,velocityView,depthView;
+    D3D11_TEXTURE2D_DESC d{};d.Width=d.Height=64;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
+    d.Format=DXGI_FORMAT_R32G32_FLOAT;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    device->CreateTexture2D(&d,nullptr,&velocity);device->CreateShaderResourceView(velocity.Get(),nullptr,&velocityView);
+    std::vector<float> data(64*64*2,0.01f);context->UpdateSubresource(velocity.Get(),0,nullptr,data.data(),64*8,0);
+    d.Format=DXGI_FORMAT_R32_FLOAT;device->CreateTexture2D(&d,nullptr,&depth);
+    device->CreateShaderResourceView(depth.Get(),nullptr,&depthView);
+    data.assign(64*64,0.5f);context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
+    auto* v=velocityView.Get();auto* z=depthView.Get();
+    memcpy(rendererFixture+0xbc0,&v,sizeof(v));memcpy(rendererFixture+0x20a0,&z,sizeof(z));
+    d.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;d.BindFlags|=D3D11_BIND_RENDER_TARGET;
+    device->CreateTexture2D(&d,nullptr,&hdr);device->CreateShaderResourceView(hdr.Get(),nullptr,&hdrView);
+    auto* h=hdrView.Get();memcpy(rendererFixture+0xaa0,&h,sizeof(h));
+    d.BindFlags=0;d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    device->CreateTexture2D(&d,nullptr,&hdrReadback);
+    std::vector<float> hdrPixels(64*64*4,0.05f);
+    for(unsigned y=30;y<34;++y)for(unsigned x=30;x<34;++x)for(unsigned c=0;c<3;++c)hdrPixels[(y*64+x)*4+c]=8;
+    bool nativeResourcesValid=true;
+    auto present=[&] {
+        const float color[]={0.8f,0.4f,0.2f,0.3f};context->ClearRenderTargetView(output.Get(),color);
+        auto* rt=output.Get();context->OMSetRenderTargets(1,&rt,nullptr);
+        D3D11_VIEWPORT sentinel{3,4,19,20,0,1};context->RSSetViewports(1,&sentinel);
+        if(nativeResourcesValid) {
+            context->UpdateSubresource(hdr.Get(),0,nullptr,hdrPixels.data(),64*16,0);
+            if(!hdrConflict){TonemapBoundary();TonemapBoundary();}
+        }
+        if(sceneReady){InterfaceBoundary();InterfaceBoundary();}
+        const unsigned char hud[]={17,231,93,77};D3D11_BOX box{0,0,0,1,1,1};
+        context->UpdateSubresource(buffer.Get(),0,&box,hud,4,0);
+        Check(SUCCEEDED(chain->Present(0,0)),"Present without CGE overlay");
+        UINT count=1;D3D11_VIEWPORT viewport{};context->RSGetViewports(&count,&viewport);
+        Check(count==1 && viewport.TopLeftX==3 && viewport.Width==19,"Restore native viewport");
+        ComPtr<ID3D11RenderTargetView> actual;context->OMGetRenderTargets(1,&actual,nullptr);
+        Check(actual.Get()==output.Get(),"Restore native output binding");
+    };
+    auto pixel=[&](int red) {
+        context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE map{};
+        Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&map)),"LDR readback");
+        const auto* bytes=static_cast<unsigned char*>(map.pData);
+        Check(abs(int(bytes[32*map.RowPitch+32*4])-red)<=2,"Effects still precede native HUD");
+        Check(bytes[0]==17 && bytes[1]==231 && bytes[2]==93 && bytes[3]==77,"HUD remains untouched");
+        context->Unmap(readback.Get(),0);
+    };
+    auto halo=[&] {
+        context->CopyResource(hdrReadback.Get(),hdr.Get());D3D11_MAPPED_SUBRESOURCE map{};
+        Check(SUCCEEDED(context->Map(hdrReadback.Get(),0,D3D11_MAP_READ,0,&map)),"HDR readback");
+        const auto* row=reinterpret_cast<const float*>(static_cast<const unsigned char*>(map.pData)+32*map.RowPitch);
+        const float value=row[37*4];context->Unmap(hdrReadback.Get(),0);return value;
+    };
+    auto edit=[&](const char* page,int type,const char* name,float number) {
+        action(type,name,number);Check(render(page),"Registered page callback");
+    };
+    present();pixel(sceneReady?102:204);
+    if(frameworkReady) {
+        edit(shared,3,"Exposure",0);present();pixel(204);
+        edit(bloom,2,"Threshold",0.5f);
+        edit(bloom,1,"Bloom enabled",1);present();
+        Check(hdrConflict || !sceneReady || halo()>0.05f,"Framework controls operate production HDR bloom");
+        edit(bloom,2,"Threshold",99);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).bloom.threshold==1,"Framework bloom slider clamps to 0..1");
+        edit(bloom,3,"Threshold",0.5f);
+        edit(bloom,3,"Intensity",0.75f);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).bloom.intensity==0.75f,"Framework numeric input persists");
+        edit(bloom,1,"Bloom enabled",0);present();Check(halo()==0.05f,"Framework bloom switch bypasses HDR");
+        const char* general="Community Graphics Engine/General";
+        const char* profiles="Community Graphics Engine/Profiles";
+        edit(profiles,1,"Automatic profiles",1);
+        edit(shared,4,"##Profile",1);edit(shared,3,"Exposure",0.5f);
+        edit(bloom,4,"##Profile",3);edit(bloom,3,"Intensity",0.9f);
+        edit(profiles,3,"Dawn (hour)",7);edit(profiles,3,"Dusk (hour)",21);edit(general,5,"Save",0);
+        auto saved=cge::Settings::Load(config);
+        Check(saved.interior.exposure==0.5f && saved.exteriorNight.bloom.intensity==0.9f &&
+            saved.dayHour==7 && saved.nightHour==21,"Framework persists independent profiles and timing");
+        edit(profiles,1,"Automatic profiles",0);
+        edit(shared,4,"##Profile",1);edit(shared,3,"Exposure",2);
+        edit(general,5,"Save",0);
+        Check(cge::Settings::Load(config).interior.exposure==0.5f,"Inactive automatic profile controls are disabled");
+        edit(shared,4,"##Profile",0);
+        edit(shared,3,"Exposure",std::numeric_limits<float>::quiet_NaN());edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).exposure==0,"Non-finite framework input is rejected");
+        const char* motion="Community Graphics Engine/Effects/Motion Blur";
+        edit(motion,1,"Motion blur enabled",1);edit(motion,4,"Quality",2);edit(motion,5,"Save",0);
+        Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");
+        if(sceneReady) {
+            present();present();present();
+            blocking(true);present();
+            std::ifstream log(root/"CGE.log");std::string logged((std::istreambuf_iterator<char>(log)),{});
+            Check(logged.find("CGE motion blur: Paused")!=std::string::npos,"Framework input capture pauses motion");
+            blocking(false);
+        }
+        edit(motion,1,"Motion blur enabled",0);
+        edit(shared,3,"Exposure",-1);edit(shared,5,"Save",0);
+        edit(shared,3,"Exposure",0);present();pixel(204);
+        // New device/chain attachment reloads the same saved CGE.ini.
+        context->ClearState();output.Reset();buffer.Reset();readback.Reset();chain.Reset();
+        memset(rendererFixture,0,sizeof(rendererFixture));
+        Check(SUCCEEDED(D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,
+            &desc,&chain,&device,nullptr,&context)),"Reattach renderer");
+        nativeResourcesValid=false;buffers();present();pixel(sceneReady?102:204);
+        edit(general,5,"Reset All",0);edit(general,5,"Save",0);
+        Check(cge::Settings::Load(config).Neutral() && !cge::Settings::Load(config).bloom.enabled,"Reset All saves neutral effects");
+    }
+    context->ClearState();output.Reset();buffer.Reset();readback.Reset();
+    Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"No retained game backbuffer during resize");
+    chain.Reset();context.Reset();device.Reset();
+    Check(GetWindowLongPtrW(window,GWLP_WNDPROC)==originalWindowProc,"Window input handling remains unchanged");
+    DestroyWindow(window);
+    std::ifstream log(root/"CGE.log");std::string logged((std::istreambuf_iterator<char>(log)),{});
+    if(missing)Check(logged.find("install SKSE Menu Framework")!=std::string::npos,"Missing framework diagnosis");
+    if(old)Check(logged.find("3 API required")!=std::string::npos,"Old framework diagnosis");
+    if(incomplete)Check(logged.find("exports are incomplete")!=std::string::npos,"Incomplete API diagnosis");
+    if(!sceneReady)Check(logged.find("scene hook unavailable")!=std::string::npos,"Scene hook failure diagnosis");
+    if(hdrConflict)Check(logged.find("HDR hook unavailable")!=std::string::npos,"HDR hook conflict diagnosis");
+    std::puts("PASS: production SKSE hooks, late SMF registration, pages, controls, persistence, HUD and input ownership.");
+    return 0;
+}

@@ -1,7 +1,7 @@
 #include "skse_api.h"
 #include "startup_hook.h"
 #include "graphics_host.h"
-#include "input_capture.h"
+#include "menu_framework.h"
 #include <cstdio>
 #include <cstdarg>
 #include <mutex>
@@ -20,6 +20,12 @@ void Log(const char* format,...) {
     if(file==INVALID_HANDLE_VALUE)return;
     DWORD written{};WriteFile(file,text,static_cast<DWORD>(strnlen_s(text,sizeof(text))),&written,nullptr);
     WriteFile(file,"\r\n",2,&written,nullptr);CloseHandle(file);
+}
+void OnSKSEMessage(cge::skse::Message* message) {
+    if(!message || !message->sender || strcmp(message->sender,"SKSE") || message->type!=1)return;
+    try {
+        std::string status;cge::menu::Register(status);Log("%s",status.c_str());
+    }catch(...){Log("CGE SKSE Menu Framework registration failed");}
 }
 HRESULT WINAPI OnCreation(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE software,UINT flags,
     const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,const DXGI_SWAP_CHAIN_DESC* desc,
@@ -56,7 +62,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
-        Log("Community Graphics Engine (CGE) 0.3.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.4.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
         // A root injector would also see device creation and may install a second editor.
         // Reject that migration conflict before modifying any executable import.
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -98,6 +104,15 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             cge::graphics::SetMotionProbe(cge::startup::PollMotion);
             Log("CGE native motion resources ready: Renderer (411393), ImageSpaceManager (414660), UI (400327)");
         }else Log("CGE motion resources unavailable: %s",error.c_str());
+        if(cge::startup::HookTonemap(GetModuleHandleW(nullptr),library,cge::graphics::HDR,error))
+            Log("CGE HDR hook ready: main cinematic tone mapping (105674 + 0x178); bloom runs before tone mapping");
+        else Log("CGE HDR hook unavailable: %s",error.c_str());
+        if(api->queryInterface && api->getPluginHandle) {
+            auto* messaging=static_cast<cge::skse::Messaging*>(api->queryInterface(5));
+            if(!messaging || messaging->version<2 || !messaging->registerListener ||
+                !messaging->registerListener(api->getPluginHandle(),"SKSE",OnSKSEMessage))
+                Log("CGE menu unavailable: SKSE messaging registration failed");
+        }else Log("CGE menu unavailable: SKSE messaging API missing");
         loaded=true;
         Log("CGE SKSE loaded; graphics creation hook ready; configuration=%ls",(directory/"CGE.ini").c_str());
         return true;
@@ -106,7 +121,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH)module=instance;
-    if(reason==DLL_PROCESS_DETACH){cge::startup::Shutdown();cge::input::Shutdown();}
+    if(reason==DLL_PROCESS_DETACH){cge::startup::Shutdown();}
     return TRUE;
 }
 

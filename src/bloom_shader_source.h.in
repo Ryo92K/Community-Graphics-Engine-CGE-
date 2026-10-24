@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char CgeBloomSource[]=R"CGEHLSL(@CGE_BLOOM_SHADER@)CGEHLSL";

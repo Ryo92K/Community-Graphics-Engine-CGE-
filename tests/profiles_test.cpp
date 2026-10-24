@@ -48,5 +48,14 @@ int main() {
     Check(Near(time.Update(clock,Environment::Exterior,0,20).exposure,0),"Twilight mixes complete color profiles");
     clock.SetSeparateProfiles(false);clock.exposure=0.4f;
     Check(time.Update(clock,Environment::Exterior,0,0).exposure==0.4f,"Shared mode ignores the day/night schedule");
+    Settings bloom;bloom.bloom={true,1,1,16};bloom.SetSeparateProfiles(true);bloom.transitionSeconds=2;
+    bloom.interior.bloom.enabled=false;bloom.exteriorNight.bloom.intensity=2;
+    ProfileTransition lights;
+    Check(lights.Update(bloom,Environment::Exterior,0,12).bloom.intensity==1,"Bloom uses day profile");
+    const auto halfLight=lights.Update(bloom,Environment::Interior,1,12).bloom;
+    Check(halfLight.enabled && Near(halfLight.intensity,0.5f),"Bloom fades towards disabled interior");
+    Check(lights.Update(bloom,Environment::Interior,1,12).bloom.intensity==0,"Bloom fade reaches zero");
+    bloom.transitionSeconds=0;lights.Reset();
+    Check(Near(lights.Update(bloom,Environment::Exterior,0,20).bloom.intensity,1.5f),"Bloom blends at dusk");
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

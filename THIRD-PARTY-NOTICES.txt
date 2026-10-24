@@ -1,39 +1,14 @@
 Community Graphics Engine (CGE)
 
-Dear ImGui v1.93.0
-Copyright (c) 2014-2026 Omar Cornut
-MIT license: licenses/DearImGui-LICENSE.txt
-Source: https://github.com/ocornut/imgui/tree/v1.93.0
-Core and Direct3D 11 backend statically linked. Upstream files unmodified.
+CGE project code is distributed under the MIT license in LICENSE.
 
-Embedded stb components are distributed within Dear ImGui source:
-imstb_rectpack.h, imstb_textedit.h, imstb_truetype.h.
-Their notices and licensing choices are retained in those source files.
+SKSE Menu Framework is a separately installed external mod. CGE communicates
+with its documented export API using minimal declarations authored for CGE.
+The framework runtime, implementation, consumer header and assets are not
+included in this distribution. Its licensing notices accompany its own package.
+Project: https://github.com/QTR-Modding/SKSE-Menu-Framework-3
+Public API: https://github.com/QTR-Modding/SKSE-Menu-Framework-3-API
 
-Windows and Direct3D SDK headers/import libraries are build dependencies.
-The Windows system runtime/compiler DLLs are not included in this package.
+Direct3D, DXGI and the shader compiler are system Windows components.
+No Microsoft runtime DLL is redistributed in this archive.
 
-stb components: Copyright (c) 2017 Sean Barrett.
-The MIT licensing alternative is selected. See licenses/stb-MIT.txt.
-
-Embedded fonts:
-ProggyClean: Copyright (c) 2004, 2005 Tristan Grimmer.
-https://github.com/bluescan/proggyfonts
-ProggyForever: Copyright (c) 2026 Disco Hello, Copyright (c) 2019,2023 Tristan Grimmer.
-https://github.com/ocornut/proggyforever
-See licenses/ProggyFonts-MIT.txt.
-
-Dear ImGui includes Japanese glyph-range data attributed upstream to the
-Agency for Cultural Affairs (Joyo Kanji) and Ministry of Justice (Jinmeiyo Kanji), Japan.
-https://www.bunka.go.jp/kokugo_nihongo/sisaku/joho/joho/kijun/naikaku/kanji/
-http://www.moj.go.jp/MINJI/minji86.html
-These upstream data are unmodified; their attribution is retained.
-License: Creative Commons Attribution 4.0 International
-https://creativecommons.org/licenses/by/4.0/legalcode
-CGE's English UI does not request these glyph ranges.
-
-Inter
-Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
-SIL Open Font License 1.1: licenses/Inter-OFL.txt
-Unmodified font bundled at SKSE/Plugins/CGE/Fonts/Inter.ttf.
-Source: https://github.com/google/fonts/tree/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter

@@ -72,14 +72,6 @@ assert "d3dcompiler_47.dll" in imports, imports
 
 assert not any(x in name for name in imports for x in ("enb", "kiloader", "d3dcompiler_43", "46e"))
 
-manifest = json.loads((project/"third_party/imgui/UPSTREAM-MANIFEST.json").read_text(encoding="utf-8-sig"))
-
-for entry in manifest["files"]:
-
-    file = project/"third_party/imgui"/entry["path"]
-
-    assert hashlib.sha256(file.read_bytes()).hexdigest() == entry["sha256"], file
-
 for file in (project/"src").glob("*"):
 
     if not file.is_file(): continue
@@ -90,10 +82,14 @@ for file in (project/"src").glob("*"):
 
         assert forbidden not in source, (file, forbidden)
 
-print("PASS: only SKSE plugin exports, compiler47, no legacy imports/SDK/preset loader; pinned upstream hashes valid.")
+print("PASS: only SKSE plugin exports, compiler47, no legacy imports/SDK/preset loader; own renderer only.")
 
 print("Imports:", ", ".join(imports))
 
-assert hashlib.sha256((project/"assets/fonts/Inter.ttf").read_bytes()).hexdigest() == "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031"
-assert "SIL OPEN FONT LICENSE Version 1.1" in (project/"licenses/Inter-OFL.txt").read_text(encoding="utf-8")
-print("PASS: pinned Inter font and OFL notice present.")
+
+assert not (project/"src/editor.cpp").exists()
+assert not (project/"src/editor_view.cpp").exists()
+assert not (project/"src/input_capture.cpp").exists()
+assert b"GetAsyncKeyState" not in data and b"DirectInput8Create" not in data
+assert b"SetWindowLongPtr" not in data and b"ImGui_Impl" not in data
+print("PASS: no local editor, renderer backend, DirectInput hook or hotkey polling.")

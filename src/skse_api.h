@@ -5,9 +5,20 @@
 // These declarations cover only the loader ABI; cell access is isolated in startup_hook.cpp.
 namespace cge::skse {
 constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
-constexpr std::uint32_t Version=3u<<16;
+constexpr std::uint32_t Version=4u<<16;
 struct Interface {
     std::uint32_t skseVersion,runtimeVersion,editorVersion,isEditor;
+    void* (*queryInterface)(std::uint32_t){};
+    std::uint32_t (*getPluginHandle)(){};
+    std::uint32_t (*getReleaseIndex)(){};
+    const void* (*getPluginInfo)(const char*){};
+};
+struct Message {const char* sender;std::uint32_t type,dataLength;void* data;};
+struct Messaging {
+    std::uint32_t version;
+    bool (*registerListener)(std::uint32_t,const char*,void(*)(Message*));
+    bool (*dispatch)(std::uint32_t,std::uint32_t,void*,std::uint32_t,const char*);
+    void* (*getEventDispatcher)(std::uint32_t);
 };
 struct Info {
     std::uint32_t infoVersion;

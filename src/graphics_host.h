@@ -15,7 +15,18 @@ void Detach(IDXGISwapChain*);
 void SetEnvironmentProbe(Environment(*probe)() noexcept);
 void SetGameHourProbe(float(*probe)() noexcept);
 void SetMotionProbe(MotionInputs(*probe)() noexcept);
+struct SettingsView {
+    Settings settings;
+    Environment environment{Environment::Unknown};
+    float hour{-1};
+    MotionState motion{MotionState::Off};
+    std::string bloom;
+};
+bool ReadSettings(SettingsView&);
+void ApplySettings(const Settings&);
+bool SaveSettings();
 void Scene() noexcept;
+void HDR(ID3D11ShaderResourceView*) noexcept;
 void Frame(IDXGISwapChain*) noexcept;
 void UpdateDimensions(IDXGISwapChain*);
 IDXGISwapChain* Wrap(IDXGISwapChain*) noexcept;

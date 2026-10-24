@@ -1,5 +1,4 @@
 #include "graphics_host.h"
-#include "input_capture.h"
 #include <windows.h>
 #include <mutex>
 #include <cstdio>
@@ -60,7 +59,6 @@ extern "C" HRESULT WINAPI D3D11CreateDeviceAndSwapChain(
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH)selfModule=instance;
-    if(reason==DLL_PROCESS_DETACH)cge::input::Shutdown();
     return TRUE;
 }
 

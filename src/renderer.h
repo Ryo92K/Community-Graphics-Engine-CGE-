@@ -3,7 +3,6 @@
 #include "motion_blur.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
-#include <functional>
 #include <string>
 #include <chrono>
 namespace cge {
@@ -38,6 +37,6 @@ class Renderer {
 public:
     bool Initialize(ID3D11Device*,std::string& error);
     std::string TakeMotionDiagnostics();
-    std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const std::function<void()>& menu,const MotionPass& motion={},MotionState* state=nullptr);
+    std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const MotionPass& motion={},MotionState* state=nullptr);
 };
 }

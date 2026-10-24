@@ -241,7 +241,92 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     interfaceEntry=entry;
     return true;
 }
+namespace {
+using ImageSpaceDraw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,void*);
+ImageSpaceDraw imageSpaceDraw{};
+void(*beforeTonemap)(ID3D11ShaderResourceView*) noexcept{};
+const unsigned char* bloomRenderer{};
+unsigned char* tonemapCall{};
+std::array<unsigned char,5> tonemapOriginal{},tonemapPatch{};
+void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
+    // This delegate replaces only the main cinematic tone-mapping call.
+    void* raw{};
+    if(source<114 && ReadMemory(bloomRenderer+0xa58+std::size_t(source)*0x30+0x18,&raw,sizeof(raw))) {
+        ID3D11ShaderResourceView* view{};
+        if(AcquireNativeView(raw,&view)) {
+            beforeTonemap(view);view->Release();
+        }else beforeTonemap(nullptr);
+    }else beforeTonemap(nullptr);
+    imageSpaceDraw(manager,effect,source,target,parameters);
+}
+unsigned char* NearRelay(unsigned char* call) {
+    SYSTEM_INFO info{};GetSystemInfo(&info);
+    const auto step=std::uintptr_t(info.dwAllocationGranularity);
+    const auto center=reinterpret_cast<std::uintptr_t>(call)&~(step-1);
+    for(std::uintptr_t distance=step;distance<0x7fff0000;distance+=step) {
+        for(int side:{-1,1}) {
+            const auto candidate=side<0?(center>distance?center-distance:0):center+distance;
+            if(candidate<step)continue;
+            MEMORY_BASIC_INFORMATION region{};
+            if(!VirtualQuery(reinterpret_cast<void*>(candidate),&region,sizeof(region)) || region.State!=MEM_FREE)continue;
+            if(auto* relay=VirtualAlloc(reinterpret_cast<void*>(candidate),64,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE))
+                return static_cast<unsigned char*>(relay);
+        }
+    }
+    return nullptr;
+}
+}
+bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
+    void(*before)(ID3D11ShaderResourceView*) noexcept,std::string& error) {
+    std::lock_guard lock(mutex);
+    if(tonemapCall)return true;
+    if(!before){error="Missing HDR callback";return false;}
+    auto* main=ResolveV5(executable,library,105674,0x17d,error);
+    auto* draw=ResolveV5(executable,library,105676,14,error);
+    auto* renderer=ResolveV5(executable,library,411393,0x2018,error);
+    if(!main || !draw || !renderer)return false;
+    constexpr unsigned char prologue[]={0x4c,0x8b,0xdc,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x70};
+    constexpr unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
+    auto* call=main+0x178;
+    std::int32_t displacement{};
+    if(call[0]!=0xe8 || memcmp(main+0x170,arguments,sizeof(arguments)) || memcmp(draw,prologue,sizeof(prologue))) {
+        error="HDR call signature differs or is already hooked; bloom disabled";return false;
+    }
+    memcpy(&displacement,call+1,4);
+    if(call+5+displacement!=draw){error="Unexpected HDR call target; bloom disabled";return false;}
+    auto* relay=NearRelay(call);
+    if(!relay){error="HDR relay allocation failed";return false;}
+    AbsoluteJump(relay,reinterpret_cast<const void*>(Tonemap));
+    DWORD prior{};
+    if(!VirtualProtect(relay,64,PAGE_EXECUTE_READ,&prior)) {
+        VirtualFree(relay,0,MEM_RELEASE);error="HDR relay protection failed";return false;
+    }
+    FlushInstructionCache(GetCurrentProcess(),relay,64);
+    const auto relative=reinterpret_cast<std::intptr_t>(relay)-reinterpret_cast<std::intptr_t>(call+5);
+    if(relative<INT32_MIN || relative>INT32_MAX) {
+        VirtualFree(relay,0,MEM_RELEASE);error="HDR relay outside branch range";return false;
+    }
+    tonemapPatch[0]=0xe8;displacement=static_cast<std::int32_t>(relative);
+    memcpy(tonemapPatch.data()+1,&displacement,4);
+    DWORD protection{};
+    if(!VirtualProtect(call,5,PAGE_EXECUTE_READWRITE,&protection)) {
+        VirtualFree(relay,0,MEM_RELEASE);error="HDR call cannot be patched";return false;
+    }
+    memcpy(tonemapOriginal.data(),call,5);
+    imageSpaceDraw=reinterpret_cast<ImageSpaceDraw>(draw);beforeTonemap=before;bloomRenderer=renderer;
+    memcpy(call,tonemapPatch.data(),5);
+    DWORD ignored{};VirtualProtect(call,5,protection,&ignored);FlushInstructionCache(GetCurrentProcess(),call,5);
+    tonemapCall=call;return true;
+}
 void Shutdown() noexcept {
+    if(tonemapCall && !memcmp(tonemapCall,tonemapPatch.data(),5)) {
+        DWORD protection{};
+        if(VirtualProtect(tonemapCall,5,PAGE_EXECUTE_READWRITE,&protection)) {
+            memcpy(tonemapCall,tonemapOriginal.data(),5);
+            DWORD ignored{};VirtualProtect(tonemapCall,5,protection,&ignored);
+            FlushInstructionCache(GetCurrentProcess(),tonemapCall,5);
+        }
+    }
     playerSingleton=nullptr;calendarSingleton=nullptr;nativeRenderer=nullptr;uiSingleton=imageSpaceSingleton=nullptr;
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};

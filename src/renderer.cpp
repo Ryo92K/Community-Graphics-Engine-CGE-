@@ -100,7 +100,7 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
 }
-std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings,bool enabled,const std::function<void()>& menu,const MotionPass& motion,MotionState* motionState) {
+std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings,bool enabled,const MotionPass& motion,MotionState* motionState) {
     PollMotionReadback();
     const bool diagnosticActive=enabled && motion.settings.enabled;
     if(diagnosticActive && (!motionDiagnosticActive_ || !(motion.settings==motionDiagnosticSettings_))) {
@@ -132,7 +132,7 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     }
     if(motionState)*motionState=state;
     const bool process=color || blur;
-    if(!process && !menu)return "idle";
+    if(!process)return "idle";
     if(!context_ || !isolated_)return "renderer unavailable";
     if(desc.SampleDesc.Count!=1 || desc.ArraySize!=1 || desc.MipLevels!=1 ||
         (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM))
@@ -192,7 +192,6 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
             CaptureMotionReadback(motion,exposure);
         }
     }
-    if(menu)menu();
-    return blur?"native motion pass active":color?"native color pass active":"menu only";
+    return blur?"native motion pass active":color?"native color pass active":"idle";
 }
 }

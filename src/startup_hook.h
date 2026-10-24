@@ -15,5 +15,6 @@ bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std
 float PollGameHour() noexcept;
 bool InitializeMotion(HMODULE executable,const std::filesystem::path& library,std::string& error);
 MotionInputs PollMotion() noexcept;
+bool HookTonemap(HMODULE,const std::filesystem::path&,void(*before)(ID3D11ShaderResourceView*) noexcept,std::string& error);
 void Shutdown() noexcept;
 }
