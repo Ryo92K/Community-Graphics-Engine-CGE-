@@ -7,9 +7,15 @@ struct BloomSettings {
     float intensity{0.15f},threshold{1.0f},radius{32};
     bool operator==(const BloomSettings&) const =default;
 };
+struct FogSettings {
+    bool enabled{false};
+    float density{0.35f},startDistance{2000};
+    bool operator==(const FogSettings&) const =default;
+};
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
     BloomSettings bloom;
+    FogSettings fog;
     bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0;}
     bool operator==(const ColorSettings&) const =default;
 };

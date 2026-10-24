@@ -77,6 +77,7 @@ void Render(unsigned page) noexcept {
             Text("Bloom");api.sameLine(0,-1);
             Text(view.bloom.empty()?"HDR pass not reached":view.bloom.c_str());
             Text("Motion Blur");api.sameLine(0,-1);Text(MotionLabel(view.motion));
+            Text("Distance Fog");api.sameLine(0,-1);Text(view.fog.empty()?"HDR pass not reached":view.fog.c_str());
         }else if(page==1) {
             bool automatic=settings.separateProfiles;
             if(api.checkbox("Automatic profiles",&automatic)){settings.SetSeparateProfiles(automatic);Changed();}
@@ -118,9 +119,14 @@ void Render(unsigned page) noexcept {
                 Control("Gamma",profile->gamma,0.5f,2.5f,1);
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
-                    const auto bloom=profile->bloom;
-                    *profile=ColorSettings{};profile->bloom=bloom;Changed();
+                    const auto bloom=profile->bloom;const auto fog=profile->fog;
+                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;Changed();
                 }
+            }else if(page==5) {
+                if(api.checkbox("Fog enabled",&profile->fog.enabled))Changed();
+                Control("Density",profile->fog.density,0,1,0.35f);
+                Control("Start Distance (units)",profile->fog.startDistance,0,50000,2000);
+                if(Button("Reset Fog")){profile->fog=FogSettings{};Changed();}
             }else {
                 if(api.checkbox("Bloom enabled",&profile->bloom.enabled))Changed();
                 Control("Intensity",profile->bloom.intensity,0,2,0.15f);
@@ -130,6 +136,7 @@ void Render(unsigned page) noexcept {
             }
             api.endDisabled();
             if(page==3 && !view.bloom.empty())Text(view.bloom.c_str());
+            if(page==5 && !view.fog.empty())Text(view.fog.c_str());
         }
         Footer(settings,page==0);
     }catch(...){/* Never propagate an exception into the framework's render loop. */}
@@ -139,6 +146,7 @@ void __stdcall Profiles(){Render(1);}
 void __stdcall Color(){Render(2);}
 void __stdcall Bloom(){Render(3);}
 void __stdcall Motion(){Render(4);}
+void __stdcall Fog(){Render(5);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -173,11 +181,11 @@ bool Register(std::string& status) {
     constexpr const char* paths[]={
         "Community Graphics Engine/General","Community Graphics Engine/Profiles",
         "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
-        "Community Graphics Engine/Effects/Motion Blur"};
-    const Page pages[]={General,Profiles,Color,Bloom,Motion};
-    for(unsigned i=0;i<5;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Motion Blur"};
+    const Page pages[]={General,Profiles,Color,Bloom,Fog,Motion};
+    for(unsigned i=0;i<6;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 5 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 6 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

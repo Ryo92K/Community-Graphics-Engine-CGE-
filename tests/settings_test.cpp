@@ -95,5 +95,23 @@ int wmain(int argc,wchar_t** argv) {
     Check(!bloom.Save(path),"Invalid bloom cannot overwrite saved settings");
     {std::ofstream file(path);file<<"[Color]\nGamma=1.2\n";}
     Check(!Settings::Load(path).bloom.enabled,"0.3 settings keep bloom disabled");
+    Settings fog;fog.fog={true,0.7f,3000};fog.SetSeparateProfiles(true);
+    fog.interior.fog={false,0.2f,100};fog.exteriorNight.fog={true,0.8f,1200};
+    Check(fog.Save(path),"Save per-profile fog");
+    auto fogReload=Settings::Load(path);
+    Check(fogReload.fog==fog.fog && fogReload.interior.fog==fog.interior.fog &&
+        fogReload.exteriorNight.fog==fog.exteriorNight.fog,"Fog settings persist for all profiles");
+    {std::ofstream file(path);file<<"[ExteriorNight]\nFogDensity=0.9\n[ExteriorDay]\nFogStartDistance=500\n[Fog]\nEnabled=true\nDensity=0.3\n";}
+    auto fogInherited=Settings::Load(path);
+    Check(fogInherited.exteriorNight.fog.enabled && fogInherited.exteriorNight.fog.density==0.9f &&
+        fogInherited.exteriorNight.fog.startDistance==500,"Fog profile inheritance ignores section order");
+    {std::ofstream file(path);file<<"[Fog]\nEnabled=true\nDensity=99\nStartDistance=-100\n";}
+    auto fogBounds=Settings::Load(path);
+    Check(fogBounds.fog.density==1 && fogBounds.fog.startDistance==0,"Fog input bounds");
+    fog.interior.fog.density=std::numeric_limits<float>::quiet_NaN();
+    Check(!fog.Save(path),"Non-finite fog cannot overwrite saved settings");
+    {std::ofstream file(path);file<<"[Bloom]\nEnabled=true\nIntensity=0.4\n";}
+    auto oldFog=Settings::Load(path);
+    Check(!oldFog.fog.enabled && !oldFog.interior.fog.enabled && oldFog.bloom.enabled,"0.4 settings retain their look with fog disabled");
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

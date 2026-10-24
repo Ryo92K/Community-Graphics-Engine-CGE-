@@ -62,7 +62,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
-        Log("Community Graphics Engine (CGE) 0.4.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.5.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
         // A root injector would also see device creation and may install a second editor.
         // Reject that migration conflict before modifying any executable import.
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -104,8 +104,12 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             cge::graphics::SetMotionProbe(cge::startup::PollMotion);
             Log("CGE native motion resources ready: Renderer (411393), ImageSpaceManager (414660), UI (400327)");
         }else Log("CGE motion resources unavailable: %s",error.c_str());
+        if(cge::startup::InitializeFog(GetModuleHandleW(nullptr),library,error)) {
+            cge::graphics::SetFogProbe(cge::startup::PollFog);
+            Log("CGE distance fog resources ready: main depth, WorldRootCamera (36609), world root (403513)");
+        }else Log("CGE fog resources unavailable: %s",error.c_str());
         if(cge::startup::HookTonemap(GetModuleHandleW(nullptr),library,cge::graphics::HDR,error))
-            Log("CGE HDR hook ready: main cinematic tone mapping (105674 + 0x178); bloom runs before tone mapping");
+            Log("CGE HDR hook ready: main cinematic tone mapping (105674 + 0x178); fog and bloom run before tone mapping");
         else Log("CGE HDR hook unavailable: %s",error.c_str());
         if(api->queryInterface && api->getPluginHandle) {
             auto* messaging=static_cast<cge::skse::Messaging*>(api->queryInterface(5));

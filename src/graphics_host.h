@@ -7,6 +7,7 @@
 #include <string>
 #include "settings.h"
 #include "motion_blur.h"
+#include "fog.h"
 namespace cge::graphics {
 using Microsoft::WRL::ComPtr;
 using Reporter=std::function<void(const std::string&)>;
@@ -15,12 +16,13 @@ void Detach(IDXGISwapChain*);
 void SetEnvironmentProbe(Environment(*probe)() noexcept);
 void SetGameHourProbe(float(*probe)() noexcept);
 void SetMotionProbe(MotionInputs(*probe)() noexcept);
+void SetFogProbe(FogInputs(*probe)() noexcept);
 struct SettingsView {
     Settings settings;
     Environment environment{Environment::Unknown};
     float hour{-1};
     MotionState motion{MotionState::Off};
-    std::string bloom;
+    std::string bloom,fog;
 };
 bool ReadSettings(SettingsView&);
 void ApplySettings(const Settings&);

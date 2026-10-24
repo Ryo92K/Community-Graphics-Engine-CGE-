@@ -30,7 +30,10 @@ class ProfileTransition {
             mix(a.gamma,b.gamma),mix(a.temperature,b.temperature),
             {a.bloom.enabled || b.bloom.enabled,
                 mix(a.bloom.enabled?a.bloom.intensity:0,b.bloom.enabled?b.bloom.intensity:0),
-                mix(a.bloom.threshold,b.bloom.threshold),mix(a.bloom.radius,b.bloom.radius)}};
+                mix(a.bloom.threshold,b.bloom.threshold),mix(a.bloom.radius,b.bloom.radius)},
+            {a.fog.enabled || b.fog.enabled,
+                mix(a.fog.enabled?a.fog.density:0,b.fog.enabled?b.fog.density:0),
+                mix(a.fog.startDistance,b.fog.startDistance)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

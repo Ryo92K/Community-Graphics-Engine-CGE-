@@ -15,7 +15,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers five pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers six pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -66,3 +66,33 @@ The SMF fixture exports a synthetic host API to exercise the real CGE.dll,
 including delayed registration and unsupported API cases.
 The D3D11 relay is also a regression fixture.
 Neither component is installed or included in the mod archive.
+
+
+## Distance fog (0.5.0)
+
+No new external dependency is required. The fog pass uses native main-depth SRV
+at Renderer + 0x20A0 independently of the motion blur/TAA adapter.
+
+The world-root singleton is Address Library ID 403513. Its camera is at +0x128.
+CGE validates WorldRootCamera (ID 36609) against this access path before enabling
+the adapter. NiCamera near/far values at +0x160/+0x164 and the orthographic flag
+at +0x168 are read through bounded copies and checked for validity.
+The getter and frustum-copy offsets were checked on the installed 1.7.104 executable.
+
+Forward-Z depth is reconstructed as:
+distance = near * far / (far * (1 - depth) + near * depth).
+
+Fog opacity is 1 - exp(-max(distance - start, 0) * density / 5000).
+The distance is in game units along the camera view axis.
+Depth clear values (sky) and invalid samples are unchanged.
+A fixed linear RGB (0.65, 0.70, 0.75) tint is used for this initial implementation.
+The pass preserves alpha and the native device-context state.
+
+The pipeline is HDR scene -> distance fog -> bloom -> native tone mapping.
+Color grading and motion blur retain their existing pre-HUD boundary.
+
+Camera layout references:
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/N/NiCamera.h
+https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/M/Main.cpp
+
+The shader, resource management, camera adapter and tests are CGE implementations.

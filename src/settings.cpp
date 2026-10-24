@@ -31,6 +31,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
             else if(value=="false" || value=="0")result.separateProfiles=false;
         }
         if(section=="Interior" || section=="Exterior" || section=="ExteriorDay" || section=="ExteriorNight")profileEntries.push_back({section,key,value});
+        if(section=="Fog" && key=="Enabled") {
+            if(value=="true" || value=="1")result.fog.enabled=true;
+            else if(value=="false" || value=="0")result.fog.enabled=false;
+        }
         if(section=="Bloom" && key=="Enabled") {
             if(value=="true" || value=="1")result.bloom.enabled=true;
             else if(value=="false" || value=="0")result.bloom.enabled=false;
@@ -45,6 +49,8 @@ Settings Settings::Load(const std::filesystem::path& path) {
         }
         float number{};auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+        if(section=="Fog" && key=="Density")result.fog.density=std::clamp(number,0.0f,1.0f);
+        if(section=="Fog" && key=="StartDistance")result.fog.startDistance=std::clamp(number,0.0f,50000.0f);
         if(section=="Bloom" && key=="Intensity")result.bloom.intensity=std::clamp(number,0.0f,2.0f);
         if(section=="Bloom" && key=="Threshold")result.bloom.threshold=std::clamp(number,0.0f,1.0f);
         if(section=="Bloom" && key=="Radius")result.bloom.radius=std::clamp(number,1.0f,64.0f);
@@ -65,6 +71,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
     auto apply=[&](const char* name,ColorSettings& profile) {
         for(const auto& entry:profileEntries) {
             if(entry.section!=name)continue;
+            if(entry.key=="FogEnabled") {
+                if(entry.value=="true" || entry.value=="1")profile.fog.enabled=true;
+                else if(entry.value=="false" || entry.value=="0")profile.fog.enabled=false;
+            }
             if(entry.key=="BloomEnabled") {
                 if(entry.value=="true" || entry.value=="1")profile.bloom.enabled=true;
                 else if(entry.value=="false" || entry.value=="0")profile.bloom.enabled=false;
@@ -72,6 +82,8 @@ Settings Settings::Load(const std::filesystem::path& path) {
             float number{};const auto& value=entry.value;
             const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
             if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+            if(entry.key=="FogDensity")profile.fog.density=std::clamp(number,0.0f,1.0f);
+            if(entry.key=="FogStartDistance")profile.fog.startDistance=std::clamp(number,0.0f,50000.0f);
             if(entry.key=="BloomIntensity")profile.bloom.intensity=std::clamp(number,0.0f,2.0f);
             if(entry.key=="BloomThreshold")profile.bloom.threshold=std::clamp(number,0.0f,1.0f);
             if(entry.key=="BloomRadius")profile.bloom.radius=std::clamp(number,1.0f,64.0f);
@@ -94,7 +106,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
     try {
         auto finite=[](const ColorSettings& p){return std::isfinite(p.exposure)&&std::isfinite(p.contrast)&&
             std::isfinite(p.saturation)&&std::isfinite(p.sharpen)&&std::isfinite(p.gamma)&&std::isfinite(p.temperature)&&std::isfinite(p.bloom.intensity)&&
-            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius);};
+            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance);};
         if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds))return false;
         if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
@@ -113,13 +125,19 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
                 <<"\nBloomEnabled="<<(p.bloom.enabled?"true":"false")
                 <<"\nBloomIntensity="<<std::clamp(p.bloom.intensity,0.0f,2.0f)
                 <<"\nBloomThreshold="<<std::clamp(p.bloom.threshold,0.0f,1.0f)
-                <<"\nBloomRadius="<<std::clamp(p.bloom.radius,1.0f,64.0f)<<"\n";
+                <<"\nBloomRadius="<<std::clamp(p.bloom.radius,1.0f,64.0f)
+                <<"\nFogEnabled="<<(p.fog.enabled?"true":"false")
+                <<"\nFogDensity="<<std::clamp(p.fog.density,0.0f,1.0f)
+                <<"\nFogStartDistance="<<std::clamp(p.fog.startDistance,0.0f,50000.0f)<<"\n";
         };
         if(profilesConfigured || separateProfiles){writeProfile("Interior",interior);writeProfile("ExteriorDay",exterior);writeProfile("ExteriorNight",exteriorNight);}
         text<<"\n[Bloom]\nEnabled="<<(bloom.enabled?"true":"false")
             <<"\nIntensity="<<std::clamp(bloom.intensity,0.0f,2.0f)
             <<"\nThreshold="<<std::clamp(bloom.threshold,0.0f,1.0f)
             <<"\nRadius="<<std::clamp(bloom.radius,1.0f,64.0f)<<"\n";
+        text<<"\n[Fog]\nEnabled="<<(fog.enabled?"true":"false")
+            <<"\nDensity="<<std::clamp(fog.density,0.0f,1.0f)
+            <<"\nStartDistance="<<std::clamp(fog.startDistance,0.0f,50000.0f)<<"\n";
         text<<"\n[MotionBlur]\nEnabled="<<(motion.enabled?"true":"false")
             <<"\nStrength="<<std::clamp(motion.strength,0.0f,2.0f)
             <<"\nMaxRadius="<<std::clamp(motion.radius,1.0f,64.0f)<<"\nSamples="<<motion.samples<<"\n";

@@ -74,6 +74,21 @@ alignas(8) unsigned char temporalFixture[0x20]{};
 void* uiSingletonFixture=uiFixture;
 void* imageSpaceSingletonFixture=imageSpaceFixture;
 
+#pragma section(".cgecamera",read,execute)
+__declspec(allocate(".cgecamera")) const unsigned char cameraGetterFixture[15]={
+    0x48,0x8b,0x05,0,0,0,0,0x48,0x8b,0x80,0x28,0x01,0,0,0xc3};
+alignas(8) unsigned char worldRootFixture[0x130]{};
+alignas(8) unsigned char cameraFixture[0x188]{};
+void* worldRootSingletonFixture=worldRootFixture;
+void PrepareCameraFixture() {
+    const void* camera=cameraFixture;memcpy(worldRootFixture+0x128,&camera,sizeof(camera));
+    const float planes[]={1,10000};memcpy(cameraFixture+0x160,planes,sizeof(planes));
+    auto* code=const_cast<unsigned char*>(cameraGetterFixture);DWORD old{},ignored{};
+    Check(VirtualProtect(code,15,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Camera fixture writable");
+    const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&worldRootSingletonFixture)-
+        reinterpret_cast<std::intptr_t>(code+7));memcpy(code+3,&displacement,4);
+    VirtualProtect(code,15,old,&ignored);
+}
 void SetGameHour(float hour) {
     memcpy(gameHourFixture+0x34,&hour,sizeof(hour));
     const void* global=gameHourFixture;memcpy(calendarFixture+0x20,&global,sizeof(global));
@@ -95,7 +110,7 @@ void WriteLibrary(const fs::path& path) {
     library[24+403521]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&playerSingletonFixture)-
         reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
     const std::pair<unsigned,const void*> motionEntries[]={
-        {105674,tonemapFixture},{105676,imageSpaceDrawFixture},{411393,rendererFixture},{414660,&imageSpaceSingletonFixture},{400327,&uiSingletonFixture}};
+        {36609,cameraGetterFixture},{403513,&worldRootSingletonFixture},{105674,tonemapFixture},{105676,imageSpaceDrawFixture},{411393,rendererFixture},{414660,&imageSpaceSingletonFixture},{400327,&uiSingletonFixture}};
     for(auto [id,address]:motionEntries)library[24+id]=static_cast<std::uint32_t>(
         reinterpret_cast<std::uintptr_t>(address)-reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
     std::ofstream file(path,std::ios::binary);
@@ -124,7 +139,7 @@ int wmain(int argc,wchar_t** argv) {
     fs::create_directories(root);fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
     auto config=root/"CGE.ini";
     Write(config,"[Color]\nExposureStops=-1\n[Input]\nToggleKey=119\n");
-    PrepareTonemapFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
+    PrepareTonemapFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
     SetCell(false);SetGameHour(12);
     const void* temporal=temporalFixture;memcpy(imageSpaceFixture+0x1f0,&temporal,sizeof(temporal));temporalFixture[0x18]=1;
     const auto library=root/"versionlib-1-7-104-0.bin";WriteLibrary(library);
@@ -164,7 +179,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?5u:0u),"Validate API before registering exactly five pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?6u:0u),"Validate API before registering exactly six pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -266,6 +281,41 @@ int wmain(int argc,wchar_t** argv) {
         edit(shared,4,"##Profile",0);
         edit(shared,3,"Exposure",std::numeric_limits<float>::quiet_NaN());edit(shared,5,"Save",0);
         Check(cge::Settings::Load(config).exposure==0,"Non-finite framework input is rejected");
+        const char* fog="Community Graphics Engine/Effects/Distance Fog";
+        edit(fog,4,"##Profile",0);
+        edit(fog,1,"Fog enabled",1);edit(fog,3,"Density",99);
+        edit(fog,3,"Start Distance (units)",99999);edit(fog,5,"Save",0);
+        auto savedFog=cge::Settings::Load(config);
+        Check(savedFog.fog.enabled && savedFog.fog.density==1 && savedFog.fog.startDistance==50000,"Fog page bounds and save");
+        edit(fog,3,"Start Distance (units)",0);
+        std::vector<float> farDepth(64*64,0.9999f);
+        context->UpdateSubresource(depth.Get(),0,nullptr,farDepth.data(),64*4,0);
+        temporalFixture[0x18]=0;present();
+        if(sceneReady && !hdrConflict) {
+            Check(halo()>0.2f,"Fog uses native depth while TAA and motion blur are disabled");
+            edit(general,1,"Effects enabled",0);present();Check(halo()==0.05f,"Master checkbox bypasses fog");
+            edit(general,1,"Effects enabled",1);
+            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+0x20a0,&invalid,sizeof(invalid));
+            present();Check(halo()==0.05f,"Invalid native depth pointer bypasses fog");
+            auto* valid=depthView.Get();memcpy(rendererFixture+0x20a0,&valid,sizeof(valid));
+            float invalidNear=0;memcpy(cameraFixture+0x160,&invalidNear,4);present();
+            Check(halo()==0.05f,"Invalid native frustum bypasses fog");
+            const float nearPlane=1;memcpy(cameraFixture+0x160,&nearPlane,4);
+            cameraFixture[0x168]=1;present();Check(halo()==0.05f,"Orthographic camera bypasses perspective fog");cameraFixture[0x168]=0;
+            playerSingletonFixture=nullptr;present();Check(halo()==0.05f,"Missing player cell bypasses fog");
+            playerSingletonFixture=playerFixture;present();Check(halo()>0.2f,"Fog recovers after valid native inputs return");
+        }
+        temporalFixture[0x18]=1;
+        edit(profiles,1,"Automatic profiles",1);
+        edit(fog,4,"##Profile",3);edit(fog,3,"Density",0.8f);edit(fog,3,"Start Distance (units)",500);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).exteriorNight.fog.density==0.8f,"Reset Color preserves the selected profile's fog");
+        edit(fog,5,"Reset Fog",0);edit(fog,5,"Save",0);
+        Check(!cge::Settings::Load(config).exteriorNight.fog.enabled &&
+            cge::Settings::Load(config).fog.enabled,"Fog reset affects only the selected profile");
+        edit(profiles,1,"Automatic profiles",0);
+        edit(fog,4,"##Profile",0);edit(fog,1,"Fog enabled",0);edit(fog,5,"Save",0);
+        context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
         const char* motion="Community Graphics Engine/Effects/Motion Blur";
         edit(motion,1,"Motion blur enabled",1);edit(motion,4,"Quality",2);edit(motion,5,"Save",0);
         Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");

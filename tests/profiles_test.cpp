@@ -57,5 +57,15 @@ int main() {
     Check(lights.Update(bloom,Environment::Interior,1,12).bloom.intensity==0,"Bloom fade reaches zero");
     bloom.transitionSeconds=0;lights.Reset();
     Check(Near(lights.Update(bloom,Environment::Exterior,0,20).bloom.intensity,1.5f),"Bloom blends at dusk");
+    Settings fog;fog.fog={true,0.6f,2000};fog.SetSeparateProfiles(true);fog.transitionSeconds=2;
+    fog.interior.fog.enabled=false;fog.exteriorNight.fog={true,1,500};
+    ProfileTransition mist;
+    Check(mist.Update(fog,Environment::Exterior,0,12).fog.density==0.6f,"Fog uses exterior day profile");
+    const auto midpoint=mist.Update(fog,Environment::Interior,1,12).fog;
+    Check(midpoint.enabled && Near(midpoint.density,0.3f),"Fog fades towards a disabled profile");
+    Check(mist.Update(fog,Environment::Interior,1,12).fog.density==0,"Fog fade reaches zero");
+    fog.transitionSeconds=0;mist.Reset();
+    const auto duskFog=mist.Update(fog,Environment::Exterior,0,20).fog;
+    Check(Near(duskFog.density,0.8f) && Near(duskFog.startDistance,1250),"Fog density and distance blend at dusk");
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

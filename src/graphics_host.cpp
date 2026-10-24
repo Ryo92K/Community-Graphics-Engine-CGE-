@@ -13,6 +13,8 @@ struct Host {
     Settings settings;
     Renderer renderer;
     BloomRenderer bloom;
+    FogRenderer fog;
+    std::string fogStatus;
     std::string bloomStatus;
     bool prepared{},hdrProcessed{},changedLocation{};
     float frameSeconds{},hour{-1};
@@ -26,6 +28,7 @@ struct Host {
     Environment(*probe)() noexcept{};
     float(*hourProbe)() noexcept{};
     MotionInputs(*motionProbe)() noexcept{};
+    FogInputs(*fogProbe)() noexcept{};
     MotionState motionState{MotionState::Off};
     bool motionWasEnabled{};
     MotionSettings reportedMotion;
@@ -66,6 +69,7 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
         if(host.report)host.report("CGE renderer initialization failed: "+error);
         host.renderer=Renderer{};return false;
     }
+    if(!host.fog.Initialize(device,error) && host.report)host.report("CGE fog initialization failed: "+error);
     if(!host.bloom.Initialize(device,error) && host.report)host.report("CGE bloom initialization failed: "+error);
     DXGI_SWAP_CHAIN_DESC desc{};if(FAILED(chain->GetDesc(&desc))){host.renderer=Renderer{};return false;}
     host.prepared=host.hdrProcessed=false;
@@ -74,7 +78,7 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
 }
 void Detach(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
-    host.renderer=Renderer{};host.bloom=BloomRenderer{};host.bloomStatus.clear();host.chain=nullptr;host.status.clear();
+    host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();
 }
 void UpdateDimensions(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
@@ -90,12 +94,21 @@ void SetGameHourProbe(float(*probe)() noexcept) {
 void SetMotionProbe(MotionInputs(*probe)() noexcept) {
     auto& host=Data();std::lock_guard lock(host.mutex);host.motionProbe=probe;
 }
+void SetFogProbe(FogInputs(*probe)() noexcept) {
+    auto& host=Data();std::lock_guard lock(host.mutex);host.fogProbe=probe;
+}
 void HDR(ID3D11ShaderResourceView* source) noexcept {
     try {
         auto& host=Data();std::lock_guard lock(host.mutex);
         if(!host.chain || host.hdrProcessed)return;
         host.hdrProcessed=true;Prepare(host);
         const bool active=host.settings.enabled && host.environment!=Environment::Unknown;
+        FogInputs fog;
+        if(active && host.color.fog.enabled && host.color.fog.density>0 && host.fogProbe)fog=host.fogProbe();
+        auto fogStatus=host.fog.Draw(source,fog,host.color.fog,active);
+        if(fogStatus!=host.fogStatus) {
+            host.fogStatus=fogStatus;if(host.report)host.report("CGE distance fog: "+fogStatus);
+        }
         auto status=host.bloom.Draw(source,host.color.bloom,active);
         
         if(status!=host.bloomStatus) {
@@ -152,7 +165,7 @@ void Scene() noexcept {
 bool ReadSettings(SettingsView& view) {
     auto& host=Data();std::lock_guard lock(host.mutex);
     if(!host.chain)return false;
-    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus};return true;
+    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus};return true;
 }
 void ApplySettings(const Settings& settings) {
     auto& host=Data();std::lock_guard lock(host.mutex);
