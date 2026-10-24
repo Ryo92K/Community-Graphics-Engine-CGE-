@@ -41,11 +41,6 @@ Other game versions are not supported by this build. Address Library and additio
 The archive installs SKSE/Plugins/CGE.dll and SKSE/Plugins/CGE.ini under Data. Nothing needs to be copied beside SkyrimSE.exe.
 
 
-
-If you used CGE 0.8.0, close the game, back up and remove its old root-level d3d11.dll first. Do not remove a DLL belonging to another mod. This alpha refuses to start alongside a non-system d3d11.dll.
-
-
-
 ## Controls
 
 
