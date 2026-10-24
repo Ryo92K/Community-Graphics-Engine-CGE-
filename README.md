@@ -2,11 +2,7 @@
 
 
 
-CGE is an SKSE plugin for adjusting Skyrim's exposure, contrast, saturation and sharpening from an in-game menu.
-
-
-
-**0.1alpha is the version label for the first planned public release.** It keeps the existing implementation. An initial in-game trial was reported with no issues; broader compatibility testing remains limited.
+CGE is an open source SKSE plugin for graphics modifications
 
 
 
@@ -20,7 +16,7 @@ CGE is an SKSE plugin for adjusting Skyrim's exposure, contrast, saturation and 
 
 
 
-Other game versions are not supported by this build. Address Library and additional helper plugins are not required.
+Other game versions are not supported by this alpha.
 
 
 
@@ -38,7 +34,7 @@ Other game versions are not supported by this build. Address Library and additio
 
 
 
-The archive installs SKSE/Plugins/CGE.dll and SKSE/Plugins/CGE.ini under Data. Nothing needs to be copied beside SkyrimSE.exe.
+The archive contains SKSE/Plugins/CGE.dll and SKSE/Plugins/CGE.ini.
 
 
 ## Controls
@@ -63,11 +59,8 @@ The menu also has Save, Reset and Close buttons. Default settings leave the imag
 
 
 
-Settings are saved to Data/SKSE/Plugins/CGE.ini. The log is Data/SKSE/Plugins/CGE.log. With MO2, modified files may appear in Overwrite.
+Settings are saved to SKSE/Plugins/CGE.ini. The log is SKSE/Plugins/CGE.log.
 
-
-
-To uninstall, close the game and disable the mod in your manager.
 
 
 
@@ -79,7 +72,7 @@ CGE uses its own SDR effects and configuration. It does not load external preset
 
 
 
-Lighting, weather, HDR rendering, depth effects and ambient occlusion are not implemented. Compatibility with other graphics engines has not been tested. FPS gains and transparency fixes have not been established.
+Lighting, weather, HDR rendering, depth effects and ambient occlusion are not implemented. Compatibility with other graphics engines has not been tested. FPS gains have not been established.
 
 
 
@@ -104,12 +97,6 @@ You need Windows x64, Visual Studio with C++ tools, the Windows SDK, Python 3 an
     cmake --install build --config Release --prefix dist-skse
 
 
-
-The mod is CGE.dll. A separate Windows relay DLL is built for regression tests only; it is not included in the mod.
-
-
-
-The GitHub Actions workflow runs the build and tests on Windows. It has not yet been run on the remote repository.
 
 
 
