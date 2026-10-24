@@ -1,0 +1,53 @@
+COMMUNITY GRAPHICS ENGINE 0.1alpha
+
+Requirements
+Skyrim SE/AE Steam 1.7.104 and SKSE 2.3.1.
+Other game versions are not supported by this build.
+
+Installation
+1. Install CGE-0.1alpha-SKSE-MO2-Vortex.zip with MO2 or Vortex.
+2. Enable the mod and deploy it if you use Vortex.
+3. Launch Skyrim through SKSE.
+4. Press F10 or Shift+Enter to open the menu.
+
+The archive installs SKSE/Plugins/CGE.dll and CGE.ini under Data.
+No CGE files need to be copied beside SkyrimSE.exe.
+
+Upgrading from 0.8.0
+Close the game. Back up and remove the old CGE d3d11.dll from the game root.
+Check the file's origin before removing it; it may belong to another mod.
+The old root-level CGE.ini is no longer used. Keep the previous injector's
+helper plugins disabled for this trial.
+
+Controls
+F10 / Shift+Enter: open
+Escape: close
+F6: save
+F7: reset
+
+Adjust Exposure, Contrast, Saturation and Sharpen in the menu.
+Default settings leave the image unchanged.
+
+Settings and logs
+Data/SKSE/Plugins/CGE.ini
+Data/SKSE/Plugins/CGE.log
+
+With MO2, modified files may appear in Overwrite. Move them to a separate
+settings mod if you want to keep them under mod-manager control.
+
+Check the log for:
+CGE SKSE loaded; graphics creation hook ready
+CGE SKSE renderer attached
+CGE menu ready: F10
+
+If CGE does not start or the menu does not open, keep the log for diagnosis.
+This alpha refuses to start alongside a non-system d3d11.dll.
+
+Uninstallation
+Close the game and disable CGE in MO2 or Vortex.
+
+Status
+This alpha provides SDR color adjustments and sharpening. It does not load
+external presets or implement lighting, weather or depth effects.
+Automated tests pass, and an initial in-game trial was reported without issues.
+Broader hardware and mod compatibility remains to be checked.

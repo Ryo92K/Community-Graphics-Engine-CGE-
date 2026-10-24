@@ -1,0 +1,22 @@
+CGE 0.1alpha - PUBLICATION FOLDERS
+
+01 - GitHub
+Upload this folder's contents to the repository root.
+It contains the source, shaders, tests, CMake files, GitHub workflow,
+MIT license and third-party dependencies needed to build CGE.
+Do not include the parent workspace or local build files.
+
+02 - Nexus Mods
+This folder contains the installable SKSE mod and its notices.
+Open the folder in WinRAR, select its contents and create a ZIP.
+SKSE and licenses must appear at the archive root, without an extra
+PUBLICATION or 02 - Nexus Mods wrapper folder.
+
+CGE-0.1alpha-SKSE-MO2-Vortex.zip is already packaged with that layout.
+
+The mod targets Skyrim Steam 1.7.104 with SKSE 2.3.1.
+Remove the old CGE 0.8.0 root DLL once before upgrading.
+See INSTALLATION.txt for details.
+
+The files are prepared locally. An initial in-game trial reported no issues;
+broader compatibility testing and publication are still pending. See docs/PUBLICATION.md for release preparation and disclosure.
