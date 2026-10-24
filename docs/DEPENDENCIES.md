@@ -7,7 +7,7 @@
 - Address Library V5 for 1.7.104, installed separately.
 
 CGE reads relocation ID 82084 from versionlib-1-7-104-0.bin to locate the
-interface boundary. It checks the database version, address bounds and function
+interface boundary and ID 403521 to locate the player singleton. It checks the database version, address bounds and function
 prefix before installing the hook. Address Library is not bundled.
 
 ## Dear ImGui
@@ -41,3 +41,16 @@ Python 3 is used by the distribution check.
 
 Windows system runtime and Direct3D compiler DLLs are not redistributed.
 CGE does not link CommonLib or load external renderer presets.
+
+## Cell detection
+
+The 1.7.104 adapter reads the player's parent-cell pointer at offset 0x60 and the
+cell interior flag at offset 0x40. It checks the player form ID and copies bounded
+fields with ReadProcessMemory, rechecking the pointers before accepting a sample.
+The build declares exact runtime compatibility and does not claim independence
+from game object layouts.
+
+Layout and singleton references:
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectREFR.h
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectCELL.h
+https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/P/PlayerCharacter.cpp

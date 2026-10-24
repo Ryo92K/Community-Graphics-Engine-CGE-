@@ -44,6 +44,8 @@ class Editor {
     void BeginBindingCapture();
     void ApplyBinding(int key);
     void Changed();
+    Environment environment_{Environment::Unknown};
+    int editProfile_{};
     std::chrono::steady_clock::time_point lastFrame_{};
     bool CreateView(ID3D11Device*);
     void DestroyView();
@@ -55,6 +57,10 @@ public:
     bool Initialize(HWND,Settings&,const std::filesystem::path&,ID3D11Device*);
     void Shutdown();
     void Pump(unsigned width,unsigned height);
+    void SetEnvironment(Environment value) noexcept {
+        if(!IsOpen() && value!=Environment::Unknown)editProfile_=value==Environment::Interior?1:0;
+        environment_=value;
+    }
     void Draw();
     bool IsOpen() const noexcept {return open_.load();}
 };

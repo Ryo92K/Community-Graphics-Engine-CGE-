@@ -2,10 +2,10 @@
 #include <cstddef>
 #include <cstdint>
 // Minimal declarations for the documented SKSE plugin ABI.
-// No game object layouts, SDK implementation or external plugin source is linked.
+// These declarations cover only the loader ABI; cell access is isolated in startup_hook.cpp.
 namespace cge::skse {
 constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
-constexpr std::uint32_t Version=1u<<16;
+constexpr std::uint32_t Version=2u<<16;
 struct Interface {
     std::uint32_t skseVersion,runtimeVersion,editorVersion,isEditor;
 };

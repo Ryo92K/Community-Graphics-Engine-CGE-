@@ -26,8 +26,8 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
 }
-std::string Renderer::Draw(ID3D11Texture2D* buffer,const Settings& settings,const std::function<void()>& menu) {
-    const bool process=settings.enabled && !settings.Neutral();
+std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings,bool enabled,const std::function<void()>& menu) {
+    const bool process=enabled && !settings.Neutral();
     if(!process && !menu)return "idle";
     if(!context_ || !isolated_)return "renderer unavailable";
     D3D11_TEXTURE2D_DESC desc{};buffer->GetDesc(&desc);

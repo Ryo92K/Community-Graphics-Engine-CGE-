@@ -30,7 +30,7 @@ void Initialize() {
     if(!systemModule || systemModule==selfModule){loadError=GetLastError();return;}
     createDevice=reinterpret_cast<PFN_D3D11_CREATE_DEVICE>(GetProcAddress(systemModule,"D3D11CreateDevice"));
     createChain=reinterpret_cast<PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN>(GetProcAddress(systemModule,"D3D11CreateDeviceAndSwapChain"));
-    Log("Community Graphics Engine (CGE) 0.1 | native SDR effects | PID=%lu",GetCurrentProcessId());
+    Log("Community Graphics Engine (CGE) 0.2 | native SDR effects | PID=%lu",GetCurrentProcessId());
     Log("CGE configuration: %ls",(directory/"CGE.ini").c_str());
 }
 }

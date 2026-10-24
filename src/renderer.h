@@ -20,6 +20,6 @@ class Renderer {
     DXGI_FORMAT format_{DXGI_FORMAT_UNKNOWN};
 public:
     bool Initialize(ID3D11Device*,std::string& error);
-    std::string Draw(ID3D11Texture2D*,const Settings&,const std::function<void()>& menu);
+    std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const std::function<void()>& menu);
 };
 }

@@ -47,15 +47,37 @@ void Editor::Draw() {
     io.DisplaySize={float(renderWidth_),float(renderHeight_)};
     ImGui_ImplDX11_NewFrame();ImGui::NewFrame();
     ImGui::SetNextWindowPos({20,20},ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize({500,380},ImGuiCond_Always);
+    ImGui::SetNextWindowSize({500,settings_->separateProfiles?450.0f:380.0f},ImGuiCond_Always);
     bool visible=true;
     if(ImGui::Begin("CGE",&visible,ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse)) {
         ImGui::SetCursorPos({12,42});
-        if(ImGui::Button(settings_->enabled?"Effects: On###Effects":"Effects: Off###Effects",{476,25})) {
+        if(ImGui::Button(settings_->enabled?"Effects: On###Effects":"Effects: Off###Effects",{236,25})) {
             settings_->enabled=!settings_->enabled;Changed();
         }
         Help("Toggle all CGE effects without changing their values.");
-        ImGui::SetCursorPos({12,78});
+        ImGui::SameLine();
+        if(ImGui::Button(settings_->separateProfiles?"Profiles: Separate###Profiles":"Profiles: Shared###Profiles",{232,25})) {
+            settings_->SetSeparateProfiles(!settings_->separateProfiles);Changed();
+        }
+        Help("Use separate settings for interiors and exteriors, or one shared profile.");
+        const float offset=settings_->separateProfiles?34.0f:0.0f;
+        auto* color=static_cast<ColorSettings*>(settings_);
+        if(settings_->separateProfiles) {
+            ImGui::SetCursorPos({12,78});
+            auto profileButton=[&](const char* label,int index,bool active) {
+                char text[64]{};sprintf_s(text,"%s%s###Profile%d",label,active?" (active)":"",index);
+                if(editProfile_==index)ImGui::PushStyleColor(ImGuiCol_Button,ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                const bool clicked=ImGui::Button(text,{234,25});
+                if(editProfile_==index)ImGui::PopStyleColor();
+                if(clicked)editProfile_=index;
+            };
+            profileButton("Exterior",0,environment_==Environment::Exterior);ImGui::SameLine();
+            profileButton("Interior",1,environment_==Environment::Interior);
+            color=editProfile_==1?&settings_->interior:&settings_->exterior;
+        }
+        ImGui::SetCursorPos({12,78+offset});
+        // Give each profile independent text-entry state while switching tabs.
+        ImGui::PushID(settings_->separateProfiles?editProfile_+1:0);
         auto control=[&](const char* label,float& value,float minimum,float maximum,float fallback,const char* help) {
             ImGui::PushID(label);
             ImGui::TextUnformatted(label);Help(help);
@@ -72,20 +94,26 @@ void Editor::Draw() {
             Help("Restore this setting to its neutral value.");
             ImGui::PopID();
         };
-        control("Exposure",settings_->exposure,-3,3,0,"Brightness in stops. Zero is neutral.");
-        control("Contrast",settings_->contrast,0,2,1,"Contrast around mid-gray. One is neutral.");
-        control("Saturation",settings_->saturation,0,2,1,"Color intensity. One is neutral.");
-        control("Sharpen",settings_->sharpen,0,1,0,"Edge sharpening. Zero is off.");
-        control("Gamma",settings_->gamma,0.5f,2.5f,1,"Midtone brightness. One is neutral.");
-        control("Temperature",settings_->temperature,-100,100,0,"Negative is cooler; positive is warmer. Zero is neutral.");
-        ImGui::SetCursorPos({12,278});ImGui::TextUnformatted("Compare key");
+        control("Exposure",color->exposure,-3,3,0,"Brightness in stops. Zero is neutral.");
+        control("Contrast",color->contrast,0,2,1,"Contrast around mid-gray. One is neutral.");
+        control("Saturation",color->saturation,0,2,1,"Color intensity. One is neutral.");
+        control("Sharpen",color->sharpen,0,1,0,"Edge sharpening. Zero is off.");
+        control("Gamma",color->gamma,0.5f,2.5f,1,"Midtone brightness. One is neutral.");
+        control("Temperature",color->temperature,-100,100,0,"Negative is cooler; positive is warmer. Zero is neutral.");
+        ImGui::PopID();
+        ImGui::SetCursorPos({12,278+offset});ImGui::TextUnformatted("Compare key");
         ImGui::SameLine(122);
         char key[48]{};sprintf_s(key,"F%d###CompareKey",settings_->toggleKey-0x70+1);
         if(ImGui::Button(capturingBinding_?"Press F1-F12###CompareKey":key,{160,25})) {
             if(capturingBinding_)capturingBinding_=false;else BeginBindingCapture();
         }
         Help("Choose an unused function key. F6, F7 and F10 are reserved. Escape cancels.");
-        ImGui::SetCursorPos({12,326});
+        if(settings_->separateProfiles) {
+            ImGui::SetCursorPos({12,346});ImGui::SetNextItemWidth(300);
+            if(ImGui::SliderFloat("Transition (s)",&settings_->transitionSeconds,0,5,"%.1f",ImGuiSliderFlags_AlwaysClamp))Changed();
+            Help("Blend between profiles when entering or leaving an interior.");
+        }
+        ImGui::SetCursorPos({12,settings_->separateProfiles?396.0f:326.0f});
         const char* save="Save###Save";
         if(saveFeedback_==SaveFeedback::Saved && now<savedUntil_)save="Saved###Save";
         else if(saveFeedback_==SaveFeedback::Failed)save="Save failed###Save";

@@ -36,5 +36,24 @@ int wmain(int argc,wchar_t** argv) {
     auto invalid=Settings::Load(path);
     Check(invalid.gamma==1 && invalid.temperature==0 && invalid.toggleKey==119,"Malformed additions retain defaults");
 
+    {std::ofstream file(path);file<<"[Color]\nExposureStops=-0.5\nGamma=1.2\n";}
+    auto migrated=Settings::Load(path);
+    Check(!migrated.separateProfiles && migrated.interior.exposure==-0.5f && migrated.exterior.gamma==1.2f,"Legacy settings seed both profiles without enabling them");
+    migrated.exposure=-0.8f;migrated.SetSeparateProfiles(true);
+    Check(migrated.interior.exposure==-0.8f && migrated.exterior.exposure==-0.8f,"First enable copies current shared values");
+    migrated.interior.exposure=1;migrated.exterior.exposure=-1;migrated.transitionSeconds=2;
+    Check(migrated.Save(path),"Save independent profiles");
+    auto profiles=Settings::Load(path);
+    Check(profiles.separateProfiles && profiles.interior.exposure==1 && profiles.exterior.exposure==-1 && profiles.transitionSeconds==2,"Profiles and transition duration roundtrip");
+    profiles.SetSeparateProfiles(false);profiles.SetSeparateProfiles(true);
+    Check(profiles.interior.exposure==1 && profiles.exterior.exposure==-1,"Switching shared mode preserves separate profiles");
+    {std::ofstream file(path);file<<"[Interior]\nExposureStops=99\nGamma=nan\n[Profiles]\nSeparate=true\nTransitionSeconds=-1\n[Color]\nGamma=1.4\n";}
+    auto bounded=Settings::Load(path);
+    Check(bounded.interior.exposure==3 && bounded.interior.gamma==1.4f && bounded.exterior.gamma==1.4f && bounded.transitionSeconds==0,"Profile bounds, finite fallback and section-order independence");
+    profiles.interior.gamma=std::numeric_limits<float>::quiet_NaN();
+    Check(!profiles.Save(path),"Non-finite profile values cannot replace a valid file");
+    profiles=Settings{};profiles.transitionSeconds=std::numeric_limits<float>::infinity();
+    Check(!profiles.Save(path),"Non-finite transition duration cannot be saved");
+
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

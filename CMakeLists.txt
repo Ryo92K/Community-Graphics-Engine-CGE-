@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CommunityGraphicsEngine VERSION 0.1.0 LANGUAGES CXX RC)
+project(CommunityGraphicsEngine VERSION 0.2.0 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "CGE requires Windows x64")
 endif()
@@ -91,4 +91,10 @@ if(BUILD_TESTING)
     add_test(NAME cge_scene_${mode} COMMAND cge_skse_render_test $<TARGET_FILE:cge>
       "${CMAKE_CURRENT_BINARY_DIR}/scene-${mode}" --${mode})
   endforeach()
+endif()
+
+if(BUILD_TESTING)
+  add_executable(cge_profiles_test tests/profiles_test.cpp)
+  target_include_directories(cge_profiles_test PRIVATE src)
+  add_test(NAME cge_profiles COMMAND cge_profiles_test)
 endif()

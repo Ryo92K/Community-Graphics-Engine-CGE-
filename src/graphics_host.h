@@ -5,11 +5,13 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include "settings.h"
 namespace cge::graphics {
 using Microsoft::WRL::ComPtr;
 using Reporter=std::function<void(const std::string&)>;
 bool Attach(IDXGISwapChain*,ID3D11Device*,const std::filesystem::path&,Reporter);
 void Detach(IDXGISwapChain*);
+void SetEnvironmentProbe(Environment(*probe)() noexcept);
 void Scene() noexcept;
 void Frame(IDXGISwapChain*) noexcept;
 void UpdateDimensions(IDXGISwapChain*);

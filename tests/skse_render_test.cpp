@@ -71,12 +71,22 @@ __declspec(allocate(".cgeui")) const unsigned char interfaceFixture[]={
     0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0xc3
 };
 void InterfaceBoundary(){reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);}
+alignas(8) unsigned char playerFixture[0x80]{};
+alignas(8) unsigned char cellFixture[0x50]{};
+void* playerSingletonFixture=playerFixture;
+void SetCell(bool interior) {
+    const std::uint16_t flags=interior?1:0;
+    memcpy(cellFixture+0x40,&flags,sizeof(flags));
+    const void* cell=cellFixture;memcpy(playerFixture+0x60,&cell,sizeof(cell));
+}
 void WriteLibrary(const fs::path& path) {
-    std::vector<std::uint32_t> library(24+82085);
+    std::vector<std::uint32_t> library(24+403522);
     library[0]=5;library[1]=1;library[2]=7;library[3]=104;
     memcpy(reinterpret_cast<char*>(library.data())+20,"SkyrimSE.exe",12);
-    library[21]=8;library[23]=82085;
+    library[21]=8;library[23]=403522;
     library[24+82084]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(interfaceFixture)-
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
+    library[24+403521]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&playerSingletonFixture)-
         reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
     std::ofstream file(path,std::ios::binary);
     file.write(reinterpret_cast<const char*>(library.data()),static_cast<std::streamsize>(library.size()*4));
@@ -89,6 +99,7 @@ int wmain(int argc,wchar_t** argv) {
     const bool rejectScene=mode==L"--missing-library" || mode==L"--invalid-library" || mode==L"--hook-conflict";
     fs::path root=fs::absolute(argv[2])/"SKSE"/"Plugins";fs::create_directories(root);
     fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
+    const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,sizeof(formId));SetCell(false);
     const auto library=root/"versionlib-1-7-104-0.bin";
     WriteLibrary(library);
     if(mode==L"--missing-library")fs::remove(library);
@@ -111,7 +122,7 @@ int wmain(int argc,wchar_t** argv) {
     auto load=Proc<bool(*)(const cge::skse::Interface*)>(module,"SKSEPlugin_Load");
     auto* metadata=Proc<const cge::skse::Metadata*>(module,"SKSEPlugin_Version");
     Check(metadata->dataVersion==1 && metadata->compatibleVersions[0]==cge::skse::Runtime &&
-        metadata->compatibleVersions[1]==0 && metadata->versionIndependence==0,"Exact declared runtime, no false universal compatibility");
+        metadata->compatibleVersions[1]==0 && metadata->versionIndependence==0 && metadata->versionIndependenceEx==0,"Exact declared runtime, no false universal compatibility");
     cge::skse::Interface api{0x02030010,cge::skse::Runtime,0,0};
     cge::skse::Info info{};
     Check(!load(nullptr),"Reject null loader interface");
@@ -143,7 +154,7 @@ int wmain(int argc,wchar_t** argv) {
     ImportOverride coordinates(module,"ScreenToClient",PhysicalToClient);
     ImportOverride clientArea(module,"GetClientRect",PhysicalClient);
     auto key=[&](WPARAM value){SendMessageW(window,WM_KEYDOWN,value,0);SendMessageW(window,WM_KEYUP,value,0);};
-    for(unsigned cycle=0;cycle<(rejectScene?1u:9u);++cycle) {
+    for(unsigned cycle=0;cycle<(rejectScene?1u:10u);++cycle) {
         if(cycle==0)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=-1\nContrast=1\nSaturation=1\n[Detail]\nSharpen=0\n");
         if(cycle==2)Write(config,"[CGE]\nEnabled=false\n[Color]\nExposureStops=2\n");
         if(cycle==3)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=0\nSaturation=0\n");
@@ -152,6 +163,7 @@ int wmain(int argc,wchar_t** argv) {
         if(cycle==6)Write(config,"[Color]\nGamma=2\n");
         if(cycle==7)Write(config,"[Color]\nTemperature=100\n");
         if(cycle==8)Write(config,"[Color]\nTemperature=-100\n");
+        if(cycle==9)Write(config,"[Color]\nExposureStops=0\n[Profiles]\nSeparate=true\nTransitionSeconds=0\n[Exterior]\nExposureStops=-1\n[Interior]\nExposureStops=1\n");
         DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=640;desc.BufferDesc.Height=720;
         desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=window;
@@ -210,6 +222,28 @@ int wmain(int argc,wchar_t** argv) {
                 for(unsigned channel=0;channel<3;++channel){hash^=c[channel];hash*=1099511628211ull;}
             }
             context->Unmap(staging.Get(),0);return hash;
+        };
+        auto captureMenu=[&](const fs::path& path) {
+            if(ansi)return;
+                D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+                ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Menu preview texture");
+                context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
+                Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Menu preview map");
+                BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};
+                info.biSize=sizeof(info);info.biWidth=static_cast<LONG>(td.Width);info.biHeight=-static_cast<LONG>(td.Height);
+                info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;
+                header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(info);
+                header.bfSize=header.bfOffBits+td.Width*td.Height*4;
+                std::ofstream image(path,std::ios::binary);
+                image.write(reinterpret_cast<const char*>(&header),sizeof(header));
+                image.write(reinterpret_cast<const char*>(&info),sizeof(info));
+                std::vector<unsigned char> row(td.Width*4);
+                for(unsigned y=0;y<td.Height;++y) {
+                    auto* source=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y;
+                    for(unsigned x=0;x<td.Width;++x){row[x*4]=source[x*4+2];row[x*4+1]=source[x*4+1];row[x*4+2]=source[x*4];row[x*4+3]=source[x*4+3];}
+                    image.write(reinterpret_cast<const char*>(row.data()),static_cast<std::streamsize>(row.size()));
+                }
+                context->Unmap(staging.Get(),0);
         };
         present();
         if(rejectScene) {
@@ -326,27 +360,7 @@ int wmain(int argc,wchar_t** argv) {
             Check(temporaryRemoved && setting("Enabled")==0,"Failed save preserves settings and cleans its temporary file");
             key(VK_F6);present();
             Check(feedbackHash()!=failedFeedback,"Successful retry clears failure feedback");
-            if(!ansi) {
-                D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-                ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Menu preview texture");
-                context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
-                Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Menu preview map");
-                BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};
-                info.biSize=sizeof(info);info.biWidth=static_cast<LONG>(td.Width);info.biHeight=-static_cast<LONG>(td.Height);
-                info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;
-                header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(info);
-                header.bfSize=header.bfOffBits+td.Width*td.Height*4;
-                std::ofstream image(root/L"CGE-menu.bmp",std::ios::binary);
-                image.write(reinterpret_cast<const char*>(&header),sizeof(header));
-                image.write(reinterpret_cast<const char*>(&info),sizeof(info));
-                std::vector<unsigned char> row(td.Width*4);
-                for(unsigned y=0;y<td.Height;++y) {
-                    auto* source=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y;
-                    for(unsigned x=0;x<td.Width;++x){row[x*4]=source[x*4+2];row[x*4+1]=source[x*4+1];row[x*4+2]=source[x*4];row[x*4+3]=source[x*4+3];}
-                    image.write(reinterpret_cast<const char*>(row.data()),static_cast<std::streamsize>(row.size()));
-                }
-                context->Unmap(staging.Get(),0);
-            }
+            captureMenu(root/L"CGE-menu.bmp");
             key(VK_ESCAPE);present();pixel(204,102,51);
             physicalKeys[VK_F11]=SHORT(0x8000);present();pixel(102,51,26);
             present();pixel(102,51,26);
@@ -365,7 +379,42 @@ int wmain(int argc,wchar_t** argv) {
         else if(cycle==5)pixel(255,102,0);
         else if(cycle==6)pixel(228,161,114);
         else if(cycle==7)pixel(243,102,43);
-        else pixel(172,102,61);
+        else if(cycle==8)pixel(172,102,61);
+        else {
+            pixel(102,51,26);
+            SetCell(true);present();pixel(255,204,102);
+            void* missing=nullptr;memcpy(playerFixture+0x60,&missing,sizeof(missing));
+            present();pixel(255,204,102);
+            SetCell(false);present();pixel(102,51,26);
+            physicalForeground=window;key(VK_F10);present();
+            auto clickProfile=[&](int x,int y) {
+                physicalPointer={x*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();
+                physicalKeys[VK_LBUTTON]=0;present();
+            };
+            clickProfile(360,110);clickProfile(350,144);
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
+            for(int digit:{VK_SUBTRACT,VK_NUMPAD2}) {
+                physicalKeys[digit]=SHORT(0x8000);present();physicalKeys[digit]=0;present();
+            }
+            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
+            present();present();key(VK_F6);present();
+            std::ifstream savedFile(config);std::string contents((std::istreambuf_iterator<char>(savedFile)),{});
+            Check(contents.find("[Interior]\nExposureStops=-2")!=std::string::npos &&
+                contents.find("[Exterior]\nExposureStops=-1")!=std::string::npos,"Editing and saving one profile leaves the other unchanged");
+            captureMenu(root/L"CGE-profiles-menu.bmp");
+            key(VK_ESCAPE);present();pixel(102,51,26);
+            SetCell(true);present();pixel(51,26,13);
+            playerSingletonFixture=nullptr;present();pixel(51,26,13);
+            playerSingletonFixture=playerFixture;
+            void* invalid=reinterpret_cast<void*>(1);memcpy(playerFixture+0x60,&invalid,sizeof(invalid));
+            present();pixel(51,26,13);
+            SetCell(false);present();pixel(102,51,26);
+            key(VK_F10);present();
+            clickProfile(350,74);key(VK_ESCAPE);present();pixel(204,102,51);
+            key(VK_F10);present();clickProfile(350,74);key(VK_ESCAPE);present();pixel(102,51,26);
+            physicalForeground=nullptr;
+        }
         context->OMSetRenderTargets(0,nullptr,nullptr);target.Reset();buffer.Reset();
         Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"Resize without retained game resources");
         buffers();present();

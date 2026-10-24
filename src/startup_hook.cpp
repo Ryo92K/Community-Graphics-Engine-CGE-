@@ -13,6 +13,7 @@ std::mutex mutex;
 using InterfaceDraw=void(*)(std::int64_t);
 InterfaceDraw drawInterface{};
 void(*beforeInterface)() noexcept{};
+const void* playerSingleton{};
 unsigned char* interfaceEntry{};
 constexpr std::array<unsigned char,15> interfacePrologue={
     0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50
@@ -73,37 +74,73 @@ bool HookCreation(HMODULE executable,PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN repl
     error="D3D11CreateDeviceAndSwapChain import not found; CGE did not modify the executable";
     return false;
 }
-bool HookInterface(HMODULE executable,const std::filesystem::path& library,
-    void(*before)() noexcept,std::string& error) {
-    std::lock_guard lock(mutex);
-    if(interfaceEntry)return true;
+namespace {
+unsigned char* ResolveV5(HMODULE executable,const std::filesystem::path& library,
+    std::uint32_t id,std::size_t bytes,std::string& error) {
     // Address Library V5: 96-byte header followed by one uint32 RVA per ID.
     // Only the verified 1.7.104 ABI/prologue is accepted by this build.
     std::ifstream input(library,std::ios::binary|std::ios::ate);
-    if(!input){error="Address Library V5 missing; install the 1.7.104 library through the mod manager";return false;}
+    if(!input){error="Address Library V5 missing; install the 1.7.104 library through the mod manager";return nullptr;}
     const auto length=input.tellg();input.seekg(0);
     std::array<std::uint32_t,24> header{};
     if(!input.read(reinterpret_cast<char*>(header.data()),sizeof(header)) ||
         header[0]!=5 || header[1]!=1 || header[2]!=7 || header[3]!=104 || header[4]!=0 ||
         memcmp(reinterpret_cast<const char*>(header.data())+20,"SkyrimSE.exe",12) ||
-        header[21]!=8 || header[23]<=82084 || length!=std::streamoff(96ull+4ull*header[23])) {
-        error="Invalid or incompatible Address Library V5 header";return false;
+        header[21]!=8 || header[23]<=id || length!=std::streamoff(96ull+4ull*header[23])) {
+        error="Invalid or incompatible Address Library V5 header";return nullptr;
     }
-    std::uint32_t offset{};input.seekg(96ull+4ull*82084);
-    if(!input.read(reinterpret_cast<char*>(&offset),sizeof(offset)) || !offset || !executable || !before) {
-        error="DrawInterfaceStart address unavailable";return false;
+    std::uint32_t offset{};input.seekg(96ull+4ull*id);
+    if(!input.read(reinterpret_cast<char*>(&offset),sizeof(offset)) || !offset || !executable) {
+        error="Requested Address Library entry unavailable";return nullptr;
     }
     auto* base=reinterpret_cast<unsigned char*>(executable);
     auto* dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     if(dos->e_magic!=IMAGE_DOS_SIGNATURE || dos->e_lfanew<=0 || dos->e_lfanew>1024*1024) {
-        error="Invalid interface hook module";return false;
+        error="Invalid interface hook module";return nullptr;
     }
     auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
     if(nt->Signature!=IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
-        offset>=nt->OptionalHeader.SizeOfImage || sizeof(interfacePrologue)>nt->OptionalHeader.SizeOfImage-offset) {
-        error="Interface address outside executable";return false;
+        offset>=nt->OptionalHeader.SizeOfImage || bytes>nt->OptionalHeader.SizeOfImage-offset) {
+        error="Requested address outside executable";return nullptr;
     }
-    auto* entry=base+offset;
+    return base+offset;
+}
+bool ReadMemory(const void* source,void* target,std::size_t size) noexcept {
+    SIZE_T bytes{};
+    return source && ReadProcessMemory(GetCurrentProcess(),source,target,size,&bytes) && bytes==size;
+}
+}
+bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& library,std::string& error) {
+    auto* address=ResolveV5(executable,library,403521,sizeof(void*),error);
+    if(!address)return false;
+    MEMORY_BASIC_INFORMATION region{};
+    if(!VirtualQuery(address,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
+        region.Protect&(PAGE_GUARD|PAGE_NOACCESS) ||
+        !(region.Protect&(PAGE_READWRITE|PAGE_WRITECOPY))) {
+        error="Player singleton is not in readable game data";return false;
+    }
+    playerSingleton=address;return true;
+}
+Environment PollEnvironment() noexcept {
+    // Runtime 1.7.104: reference parentCell at 0x60, cell interior flag at 0x40.
+    // Copy bounded fields instead of dereferencing objects during cell changes.
+    const unsigned char *player{},*cell{},*again{},*samePlayer{};
+    std::uint32_t formId{};std::uint16_t flags{};
+    if(!ReadMemory(playerSingleton,&player,sizeof(player)) || !player ||
+        !ReadMemory(player+0x14,&formId,sizeof(formId)) || formId!=0x14 ||
+        !ReadMemory(player+0x60,&cell,sizeof(cell)) || !cell ||
+        !ReadMemory(cell+0x40,&flags,sizeof(flags)) ||
+        !ReadMemory(player+0x60,&again,sizeof(again)) || again!=cell ||
+        !ReadMemory(playerSingleton,&samePlayer,sizeof(samePlayer)) || samePlayer!=player)return Environment::Unknown;
+    return (flags&1)?Environment::Interior:Environment::Exterior;
+}
+bool HookInterface(HMODULE executable,const std::filesystem::path& library,
+    void(*before)() noexcept,std::string& error) {
+    std::lock_guard lock(mutex);
+    if(interfaceEntry)return true;
+    if(!before){error="Missing interface callback";return false;}
+    auto* entry=ResolveV5(executable,library,82084,interfacePrologue.size(),error);
+    if(!entry)return false;
     MEMORY_BASIC_INFORMATION region{};
     if(!VirtualQuery(entry,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
         reinterpret_cast<std::uintptr_t>(entry)+interfacePrologue.size()>
@@ -136,6 +173,7 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     return true;
 }
 void Shutdown() noexcept {
+    playerSingleton=nullptr;
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};
         if(VirtualProtect(interfaceEntry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)) {
