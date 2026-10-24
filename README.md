@@ -108,6 +108,3 @@ The GitHub Actions workflow runs the build and tests on Windows. It has not yet 
 CGE code is licensed under [MIT](LICENSE). Dear ImGui and its bundled components retain their own licenses; see [third-party notices](THIRD-PARTY-NOTICES.txt).
 
 
-
-Development includes substantial AI-generated code and UI implementation. [Dependencies and provenance](docs/DEPENDENCIES.md) records the source history and upstream references.
-
