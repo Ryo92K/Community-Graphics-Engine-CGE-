@@ -72,6 +72,7 @@ int wmain(int argc,wchar_t** argv) {
     for(const auto* name:{"ENBGetVersion","ENBGetSDKVersion","ENBGetParameter","DirtyHack","TwInit"})
         Check(!GetProcAddress(module,name),"No legacy renderer exports");
     Check(!GetModuleHandleW(L"KiENBExtender.dll") && !GetModuleHandleW(L"ENBHelperSE.dll"),"No external helpers");
+    auto scene=Proc<void(*)()>(module,"CGE_TestScene");
     auto create=Proc<PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN>(module,"D3D11CreateDeviceAndSwapChain");
     auto instance=GetModuleHandleW(nullptr);
     HWND window{};
@@ -93,12 +94,15 @@ int wmain(int argc,wchar_t** argv) {
     ImportOverride coordinates(module,"ScreenToClient",PhysicalToClient);
     ImportOverride clientArea(module,"GetClientRect",PhysicalClient);
     auto key=[&](WPARAM value){SendMessageW(window,WM_KEYDOWN,value,0);SendMessageW(window,WM_KEYUP,value,0);};
-    for(unsigned cycle=0;cycle<6;++cycle) {
+    for(unsigned cycle=0;cycle<9;++cycle) {
         if(cycle==0)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=-1\nContrast=1\nSaturation=1\n[Detail]\nSharpen=0\n");
         if(cycle==2)Write(config,"[CGE]\nEnabled=false\n[Color]\nExposureStops=2\n");
         if(cycle==3)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=0\nSaturation=0\n");
         if(cycle==4)Write(config,"[CGE]\nEnabled=true\n[Color]\nContrast=0\n");
         if(cycle==5)Write(config,"[CGE]\nEnabled=true\n[Detail]\nSharpen=1\n");
+        if(cycle==6)Write(config,"[Color]\nGamma=2\n");
+        if(cycle==7)Write(config,"[Color]\nTemperature=100\n");
+        if(cycle==8)Write(config,"[Color]\nTemperature=-100\n");
         DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=640;desc.BufferDesc.Height=720;
         desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=window;
@@ -121,6 +125,7 @@ int wmain(int argc,wchar_t** argv) {
             }
             auto* rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);
             D3D11_VIEWPORT sentinel={3,4,19,20,0,1};context->RSSetViewports(1,&sentinel);
+            scene();
             Check(SUCCEEDED(chain->Present(0,0)),"Present CGE");
             UINT n=1;D3D11_VIEWPORT restored{};context->RSGetViewports(&n,&restored);
             Check(n==1 && restored.TopLeftX==3 && restored.Width==19,"Restore game viewport");
@@ -158,7 +163,10 @@ int wmain(int argc,wchar_t** argv) {
         }else if(cycle==2)pixel(204,102,51);
         else if(cycle==3)pixel(120,120,120);
         else if(cycle==4)pixel(128,128,128);
-        else pixel(255,102,0);
+        else if(cycle==5)pixel(255,102,0);
+        else if(cycle==6)pixel(228,161,114);
+        else if(cycle==7)pixel(243,102,43);
+        else pixel(172,102,61);
         context->OMSetRenderTargets(0,nullptr,nullptr);target.Reset();buffer.Reset();
         Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"Resize without retained game resources");
         buffers();present();

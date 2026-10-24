@@ -6,6 +6,9 @@ cbuffer CgeColorControls : register(b0) {
     float CgeContrast;
     float CgeSaturation;
     float CgeSharpen;
+    float CgeGamma;
+    float CgeTemperature;
+    float2 CgePadding;
 };
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
@@ -25,8 +28,10 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
         color+=CgeSharpen*(color-neighbors*0.25);
     }
     color*=exp2(CgeExposureStops);
+    color*=float3(exp2(CgeTemperature*0.25),1.0,exp2(-CgeTemperature*0.25));
     color=(color-0.5)*CgeContrast+0.5;
     float luminance=dot(color,float3(0.2126,0.7152,0.0722));
     color=lerp(luminance.xxx,color,CgeSaturation);
-    return float4(saturate(color),source.a);
+    color=pow(saturate(color),1.0/CgeGamma);
+    return float4(color,source.a);
 }

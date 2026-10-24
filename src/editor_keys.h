@@ -4,7 +4,7 @@
 namespace cge {
 class EditorKeys {
 public:
-    enum Key : unsigned { F10, ShiftEnter, Escape, Save, Defaults, Count };
+    enum Key : unsigned { F10, ShiftEnter, Escape, Save, Defaults, Compare, Count };
     using Snapshot=std::array<bool,Count>;
     static constexpr unsigned LostFocus=1u<<Count;
     bool Press(Key key) {return !down_[key].exchange(true);}

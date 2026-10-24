@@ -85,3 +85,10 @@ if(BUILD_TESTING)
   add_test(NAME cge_skse_rejects_root_injector COMMAND cge_skse_reject_test $<TARGET_FILE:cge>
     "${CMAKE_CURRENT_BINARY_DIR}/skse-conflict" $<TARGET_FILE:cge_test_proxy>)
 endif()
+
+if(BUILD_TESTING)
+  foreach(mode missing-library invalid-library hook-conflict)
+    add_test(NAME cge_scene_${mode} COMMAND cge_skse_render_test $<TARGET_FILE:cge>
+      "${CMAKE_CURRENT_BINARY_DIR}/scene-${mode}" --${mode})
+  endforeach()
+endif()

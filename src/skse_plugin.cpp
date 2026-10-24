@@ -56,7 +56,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
-        Log("Community Graphics Engine (CGE) 0.1alpha | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.1 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
         // A root injector would also see device creation and may install a second editor.
         // Reject that migration conflict before modifying any executable import.
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -73,10 +73,23 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         if(!cge::startup::HookCreation(GetModuleHandleW(nullptr),OnCreation,original,error)) {
             Log("CGE initialization failed: %s",error.c_str());return false;
         }
+        wchar_t executablePath[32768]{};
+        const auto executableLength=GetModuleFileNameW(nullptr,executablePath,ARRAYSIZE(executablePath));
+        auto library=directory/"versionlib-1-7-104-0.bin";
+        if(executableLength && executableLength<ARRAYSIZE(executablePath)) {
+            auto virtualLibrary=std::filesystem::path(executablePath).parent_path()/
+                "Data"/"SKSE"/"Plugins"/"versionlib-1-7-104-0.bin";
+            // Open through the game's Data path so MO2 can supply another mod's file.
+            std::error_code ec;
+            if(std::filesystem::exists(virtualLibrary,ec))library=virtualLibrary;
+        }
+        if(cge::startup::HookInterface(GetModuleHandleW(nullptr),library,cge::graphics::Scene,error))
+            Log("CGE scene hook ready: DrawInterfaceStart (82084); effects run before HUD and menus");
+        else Log("CGE scene hook unavailable: %s. Effects will not run at Present.",error.c_str());
         loaded=true;
         Log("CGE SKSE loaded; graphics creation hook ready; configuration=%ls",(directory/"CGE.ini").c_str());
         return true;
-    }catch(...){Log("CGE SKSE initialization failed");return false;}
+    }catch(...){cge::startup::Shutdown();Log("CGE SKSE initialization failed");return false;}
 }
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {

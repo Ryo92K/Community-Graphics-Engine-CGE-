@@ -21,7 +21,7 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
     if(!compile("FullscreenVertex","vs_5_0",vs) || !compile("ColorPixel","ps_5_0",ps))return false;
     if(FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)))return false;
-    D3D11_BUFFER_DESC desc{};desc.ByteWidth=16;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_BUFFER_DESC desc{};desc.ByteWidth=32;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     if(FAILED(device->CreateBuffer(&desc,nullptr,&constants_)))return false;
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
@@ -54,7 +54,7 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const Settings& settings,cons
     auto* output=target.Get();context_->OMSetRenderTargets(1,&output,nullptr);
     D3D11_VIEWPORT viewport={0,0,float(desc.Width),float(desc.Height),0,1};context_->RSSetViewports(1,&viewport);
     if(process) {
-        const float parameters[]={settings.exposure,settings.contrast,settings.saturation,settings.sharpen};
+        const float parameters[]={settings.exposure,settings.contrast,settings.saturation,settings.sharpen,settings.gamma,settings.temperature*0.01f,0,0};
         context_->UpdateSubresource(constants_.Get(),0,nullptr,parameters,0,0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->RSSetState(raster_.Get());context_->VSSetShader(vertex_.Get(),nullptr,0);context_->PSSetShader(pixel_.Get(),nullptr,0);

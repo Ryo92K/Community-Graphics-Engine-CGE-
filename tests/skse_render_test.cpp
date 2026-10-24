@@ -63,11 +63,42 @@ LRESULT CALLBACK Window(HWND window,UINT type,WPARAM w,LPARAM l) {
     return IsWindowUnicode(window)?DefWindowProcW(window,type,w,l):DefWindowProcA(window,type,w,l);
 }
 
+// An executable fixture with the verified Skyrim prefix and a balanced return.
+// It exercises the production trampoline without executing game code.
+#pragma section(".cgeui",read,execute)
+__declspec(allocate(".cgeui")) const unsigned char interfaceFixture[]={
+    0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50,
+    0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0xc3
+};
+void InterfaceBoundary(){reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);}
+void WriteLibrary(const fs::path& path) {
+    std::vector<std::uint32_t> library(24+82085);
+    library[0]=5;library[1]=1;library[2]=7;library[3]=104;
+    memcpy(reinterpret_cast<char*>(library.data())+20,"SkyrimSE.exe",12);
+    library[21]=8;library[23]=82085;
+    library[24+82084]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(interfaceFixture)-
+        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
+    std::ofstream file(path,std::ios::binary);
+    file.write(reinterpret_cast<const char*>(library.data()),static_cast<std::streamsize>(library.size()*4));
+    Check(bool(file),"Write Address Library fixture");
+}
 int wmain(int argc,wchar_t** argv) {
     Check(argc==4,"DLL, fixture and window mode");
-    bool ansi=std::wstring(argv[3])==L"--ansi";
+    const std::wstring mode=argv[3];
+    bool ansi=mode==L"--ansi";
+    const bool rejectScene=mode==L"--missing-library" || mode==L"--invalid-library" || mode==L"--hook-conflict";
     fs::path root=fs::absolute(argv[2])/"SKSE"/"Plugins";fs::create_directories(root);
     fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
+    const auto library=root/"versionlib-1-7-104-0.bin";
+    WriteLibrary(library);
+    if(mode==L"--missing-library")fs::remove(library);
+    if(mode==L"--invalid-library")Write(library,"invalid");
+    if(mode==L"--hook-conflict") {
+        DWORD old{},ignored{};
+        Check(VirtualProtect(const_cast<unsigned char*>(interfaceFixture),sizeof(interfaceFixture),PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Fixture writable");
+        *const_cast<unsigned char*>(interfaceFixture)=0x90;
+        VirtualProtect(const_cast<unsigned char*>(interfaceFixture),sizeof(interfaceFixture),old,&ignored);
+    }
     auto config=root/"CGE.ini";
     auto module=LoadLibraryExW((root/"CGE.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     Check(module!=nullptr,"Load CGE");
@@ -112,12 +143,15 @@ int wmain(int argc,wchar_t** argv) {
     ImportOverride coordinates(module,"ScreenToClient",PhysicalToClient);
     ImportOverride clientArea(module,"GetClientRect",PhysicalClient);
     auto key=[&](WPARAM value){SendMessageW(window,WM_KEYDOWN,value,0);SendMessageW(window,WM_KEYUP,value,0);};
-    for(unsigned cycle=0;cycle<6;++cycle) {
+    for(unsigned cycle=0;cycle<(rejectScene?1u:9u);++cycle) {
         if(cycle==0)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=-1\nContrast=1\nSaturation=1\n[Detail]\nSharpen=0\n");
         if(cycle==2)Write(config,"[CGE]\nEnabled=false\n[Color]\nExposureStops=2\n");
         if(cycle==3)Write(config,"[CGE]\nEnabled=true\n[Color]\nExposureStops=0\nSaturation=0\n");
         if(cycle==4)Write(config,"[CGE]\nEnabled=true\n[Color]\nContrast=0\n");
         if(cycle==5)Write(config,"[CGE]\nEnabled=true\n[Detail]\nSharpen=1\n");
+        if(cycle==6)Write(config,"[Color]\nGamma=2\n");
+        if(cycle==7)Write(config,"[Color]\nTemperature=100\n");
+        if(cycle==8)Write(config,"[Color]\nTemperature=-100\n");
         DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=640;desc.BufferDesc.Height=720;
         desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;desc.SampleDesc.Count=1;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=window;
@@ -128,6 +162,7 @@ int wmain(int argc,wchar_t** argv) {
         ComPtr<ID3D11Texture2D> buffer;ComPtr<ID3D11RenderTargetView> target;
         auto buffers=[&] {Check(SUCCEEDED(chain->GetBuffer(0,IID_PPV_ARGS(&buffer))),"Backbuffer");Check(SUCCEEDED(device->CreateRenderTargetView(buffer.Get(),nullptr,&target)),"Output view");};
         buffers();
+        bool drawScene=!rejectScene;
         auto present=[&] {
             const float color[]={0.8f,0.4f,0.2f,0.3f};context->ClearRenderTargetView(target.Get(),color);
             if(cycle==5) {
@@ -140,6 +175,10 @@ int wmain(int argc,wchar_t** argv) {
             }
             auto* rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);
             D3D11_VIEWPORT sentinel={3,4,19,20,0,1};context->RSSetViewports(1,&sentinel);
+            if(drawScene){InterfaceBoundary();InterfaceBoundary();}
+            const unsigned char hud[]={17,231,93,77};
+            D3D11_BOX hudRegion{0,0,0,1,1,1};
+            context->UpdateSubresource(buffer.Get(),0,&hudRegion,hud,4,0);
             Check(SUCCEEDED(chain->Present(0,0)),"Present CGE");
             UINT n=1;D3D11_VIEWPORT restored{};context->RSGetViewports(&n,&restored);
             Check(n==1 && restored.TopLeftX==3 && restored.Width==19,"Restore game viewport");
@@ -154,22 +193,168 @@ int wmain(int argc,wchar_t** argv) {
             auto* c=static_cast<unsigned char*>(mapped.pData)+mapped.RowPitch*(td.Height/2)+4*(td.Width/2);
             if(abs(int(c[0])-r)>2 || abs(int(c[1])-g)>2 || abs(int(c[2])-b)>2 || abs(int(c[3])-77)>2) {
                 std::printf("Pixel=%u,%u,%u,%u expected=%d,%d,%d,77\n",c[0],c[1],c[2],c[3],r,g,b);Check(false,"CGE native pass pixels and alpha");
-            }context->Unmap(staging.Get(),0);
+            }
+            auto* hud=static_cast<unsigned char*>(mapped.pData);
+            Check(hud[0]==17 && hud[1]==231 && hud[2]==93 && hud[3]==77,"HUD drawn after scene effects stays unchanged");
+            context->Unmap(staging.Get(),0);
+        };
+
+        auto feedbackHash=[&] {
+            D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+            ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Feedback readback");
+            context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
+            Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Feedback map");
+            std::uint64_t hash=1469598103934665603ull;
+            for(unsigned y=346;y<374;++y)for(unsigned x=32;x<132;++x) {
+                auto* c=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y+4*x;
+                for(unsigned channel=0;channel<3;++channel){hash^=c[channel];hash*=1099511628211ull;}
+            }
+            context->Unmap(staging.Get(),0);return hash;
         };
         present();
-        if(cycle==0) {
-            pixel(102,51,26);physicalForeground=window;present();
+        if(rejectScene) {
+            pixel(204,102,51);
+            std::ifstream log(root/"CGE.log");std::string text((std::istreambuf_iterator<char>(log)),{});
+            Check(text.find("scene hook unavailable")!=std::string::npos,"Missing/invalid/conflicting scene hook is reported");
+        }else if(cycle==0) {
+            pixel(102,51,26);
+            drawScene=false;present();pixel(204,102,51);
+            drawScene=true;present();pixel(102,51,26);physicalForeground=window;present();
+            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(204,102,51);
+            present();pixel(204,102,51);
+            physicalKeys[VK_F8]=0;present();
+            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(102,51,26);
+            physicalKeys[VK_F8]=0;present();
+            physicalKeys[VK_F8]=SHORT(0x8000);SendMessageW(window,WM_KEYDOWN,VK_F8,0);present();pixel(204,102,51);
+            SendMessageW(window,WM_KEYDOWN,VK_F8,0);present();pixel(204,102,51);
+            physicalKeys[VK_F8]=0;SendMessageW(window,WM_KEYUP,VK_F8,0);present();
+            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(102,51,26);
+            physicalKeys[VK_F8]=0;present();
             physicalKeys[VK_F10]=SHORT(0x8000);present();physicalKeys[VK_F10]=0;present();
             key('W');Check(forwarded==0,"Menu captures window keyboard input");
             auto click=[&](int x,int y) {
                 physicalPointer={x*2,y*2};present();physicalKeys[VK_LBUTTON]=SHORT(0x8000);present();
                 physicalKeys[VK_LBUTTON]=0;present();
             };
-            click(44,74); // Checkbox is first control, relative to the title bar.
+
+            auto setting=[&](const char* name) {
+                std::ifstream input(config);std::string contents((std::istreambuf_iterator<char>(input)),{});
+                auto at=contents.find(std::string(name)+"=");Check(at!=std::string::npos,"Saved setting exists");
+                auto value=contents.substr(at+strlen(name)+1);
+                if(value.starts_with("true"))return 1.0f;
+                if(value.starts_with("false"))return 0.0f;
+                return std::stof(value);
+            };
+            click(350,234);
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
+            physicalKeys[VK_NUMPAD2]=SHORT(0x8000);present();
+            physicalKeys[VK_NUMPAD2]=0;present();
+            physicalKeys[VK_RETURN]=SHORT(0x8000);present();
+            physicalKeys[VK_RETURN]=0;present();
+            key(VK_F6);present();
+            Check(setting("Gamma")==2,"Precise keyboard entry commits actual gamma");
+
+            click(350,234);
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
+            physicalKeys[VK_NUMPAD9]=SHORT(0x8000);
+            SendMessageW(window,WM_KEYDOWN,VK_NUMPAD9,0);
+            SendMessageW(window,WM_CHAR,'9',LPARAM(0x490000));present();
+            physicalKeys[VK_NUMPAD9]=0;SendMessageW(window,WM_KEYUP,VK_NUMPAD9,0);present();
+            physicalKeys[VK_RETURN]=SHORT(0x8000);present();
+            physicalKeys[VK_RETURN]=0;present();
+            key(VK_F6);present();Check(setting("Gamma")==2.5f,"Precise entry respects the allowed range");
+            click(350,234);
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
+            for(int digit:{VK_NUMPAD1,VK_DECIMAL,VK_NUMPAD2,VK_NUMPAD5}) {
+                physicalKeys[digit]=SHORT(0x8000);
+                if(digit==VK_NUMPAD1) {
+                    SendMessageW(window,WM_KEYDOWN,digit,LPARAM(0x4f0000));
+                    SendMessageW(window,WM_CHAR,'1',LPARAM(0x4f0000));
+                }
+                present();physicalKeys[digit]=0;present();
+            }
+            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
+            key(VK_F6);present();Check(setting("Gamma")==1.25f,"Physical numeric and decimal input works without WM_CHAR");
+            click(350,234);
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=SHORT(0x8000);present();
+            physicalKeys[VK_CONTROL]=physicalKeys['A']=0;present();
+            for(wchar_t character:std::wstring(L"1.75")) {
+                const auto mapped=VkKeyScanExW(character,GetKeyboardLayout(0));
+                Check(mapped!=-1,"Current keyboard layout can type numeric value");
+                const int vk=mapped&255;
+                physicalKeys[VK_SHIFT]=(mapped&0x100)?SHORT(0x8000):0;
+                physicalKeys[VK_CONTROL]=(mapped&0x200)?SHORT(0x8000):0;
+                physicalKeys[VK_MENU]=(mapped&0x400)?SHORT(0x8000):0;
+                physicalKeys[vk]=SHORT(0x8000);present();
+                physicalKeys[vk]=physicalKeys[VK_SHIFT]=physicalKeys[VK_CONTROL]=physicalKeys[VK_MENU]=0;present();
+            }
+            physicalKeys[VK_RETURN]=SHORT(0x8000);present();physicalKeys[VK_RETURN]=0;present();
+            // Let ImGui consume interleaved Shift/text/Enter events before saving.
+            present();present();present();
+            key(VK_F6);present();Check(setting("Gamma")==1.75f,"Number-row and punctuation follow the active keyboard layout");
+            click(432,234);key(VK_F6);present();
+            Check(setting("Gamma")==1 && setting("ExposureStops")==-1,"Per-control reset leaves other values intact");
+            click(200,310);
+            physicalKeys[VK_F6]=SHORT(0x8000);present();
+            physicalKeys[VK_F6]=0;present();
+            physicalKeys[VK_F11]=SHORT(0x8000);present();
+            physicalKeys[VK_F11]=0;present();
+            key(VK_F6);present();
+            Check(setting("ToggleKey")==122,"Custom compare key is saved; reserved keys do not finish binding");
+            Check(setting("Enabled")==1,"Binding capture does not accidentally toggle effects");
+
+            click(200,310);key(VK_ESCAPE);present();key(VK_F6);present();
+            Check(setting("ToggleKey")==122,"Escape cancels rebinding without changing the shortcut");
+            click(44,74); // The visible On/Off button bypasses the entire pass.
+
             key(VK_F6);present();
             std::ifstream file(config);std::string saved((std::istreambuf_iterator<char>(file)),{});
             Check(saved.find("Enabled=false")!=std::string::npos,"Own checkbox and Save change CGE.ini");
+
+            file.close();
+            const auto savedFeedback=feedbackHash();
+            const auto attributes=GetFileAttributesW(config.c_str());
+            Check(attributes!=INVALID_FILE_ATTRIBUTES && SetFileAttributesW(config.c_str(),attributes|FILE_ATTRIBUTE_READONLY),"Make test settings read-only");
+            key(VK_F6);present();
+            const auto failedFeedback=feedbackHash();
+            const bool temporaryRemoved=!fs::exists(config.wstring()+L".tmp");
+            Check(SetFileAttributesW(config.c_str(),attributes)!=FALSE,"Restore test settings attributes");
+            Check(failedFeedback!=savedFeedback,"Save failure changes visible button feedback");
+            Check(temporaryRemoved && setting("Enabled")==0,"Failed save preserves settings and cleans its temporary file");
+            key(VK_F6);present();
+            Check(feedbackHash()!=failedFeedback,"Successful retry clears failure feedback");
+            if(!ansi) {
+                D3D11_TEXTURE2D_DESC td{};buffer->GetDesc(&td);td.BindFlags=0;td.Usage=D3D11_USAGE_STAGING;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+                ComPtr<ID3D11Texture2D> staging;Check(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&staging)),"Menu preview texture");
+                context->CopyResource(staging.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE mapped{};
+                Check(SUCCEEDED(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped)),"Menu preview map");
+                BITMAPFILEHEADER header{};BITMAPINFOHEADER info{};
+                info.biSize=sizeof(info);info.biWidth=static_cast<LONG>(td.Width);info.biHeight=-static_cast<LONG>(td.Height);
+                info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;
+                header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(info);
+                header.bfSize=header.bfOffBits+td.Width*td.Height*4;
+                std::ofstream image(root/L"CGE-menu.bmp",std::ios::binary);
+                image.write(reinterpret_cast<const char*>(&header),sizeof(header));
+                image.write(reinterpret_cast<const char*>(&info),sizeof(info));
+                std::vector<unsigned char> row(td.Width*4);
+                for(unsigned y=0;y<td.Height;++y) {
+                    auto* source=static_cast<const unsigned char*>(mapped.pData)+mapped.RowPitch*y;
+                    for(unsigned x=0;x<td.Width;++x){row[x*4]=source[x*4+2];row[x*4+1]=source[x*4+1];row[x*4+2]=source[x*4];row[x*4+3]=source[x*4+3];}
+                    image.write(reinterpret_cast<const char*>(row.data()),static_cast<std::streamsize>(row.size()));
+                }
+                context->Unmap(staging.Get(),0);
+            }
             key(VK_ESCAPE);present();pixel(204,102,51);
+            physicalKeys[VK_F11]=SHORT(0x8000);present();pixel(102,51,26);
+            present();pixel(102,51,26);
+            physicalKeys[VK_F11]=0;present();
+            physicalKeys[VK_F11]=SHORT(0x8000);present();pixel(204,102,51);
+            physicalKeys[VK_F11]=0;present();
+            physicalKeys[VK_F8]=SHORT(0x8000);present();pixel(204,102,51);
+            physicalKeys[VK_F8]=0;present();
             key('W');Check(forwarded==1,"Close releases window keyboard input");
             physicalForeground=nullptr;
         }else if(cycle==1) {
@@ -177,7 +362,10 @@ int wmain(int argc,wchar_t** argv) {
         }else if(cycle==2)pixel(204,102,51);
         else if(cycle==3)pixel(120,120,120);
         else if(cycle==4)pixel(128,128,128);
-        else pixel(255,102,0);
+        else if(cycle==5)pixel(255,102,0);
+        else if(cycle==6)pixel(228,161,114);
+        else if(cycle==7)pixel(243,102,43);
+        else pixel(172,102,61);
         context->OMSetRenderTargets(0,nullptr,nullptr);target.Reset();buffer.Reset();
         Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"Resize without retained game resources");
         buffers();present();
@@ -190,3 +378,4 @@ int wmain(int argc,wchar_t** argv) {
     DestroyWindow(window);
     std::puts("PASS: SKSE load, executable IAT interception, CGE native pixels, alpha, bypass, saturation, state, resize, own menu, Save and reset.");
 }
+

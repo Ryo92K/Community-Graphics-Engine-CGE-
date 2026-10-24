@@ -23,5 +23,11 @@ int main(){
     input[EditorKeys::Escape]=true;input[EditorKeys::Save]=true;input[EditorKeys::Defaults]=true;
     Check(keys.Poll(true,input)==((1u<<EditorKeys::Escape)|(1u<<EditorKeys::Save)|(1u<<EditorKeys::Defaults)),"Escape/save/reset physical fallback");
     keys.Reset();Check(keys.Poll(true,input)==0,"New session primes key state");
+    keys.Reset();input={};keys.Poll(true,input);
+    input[EditorKeys::Compare]=true;
+    Check(keys.Poll(true,input)==(1u<<EditorKeys::Compare),"Compare shortcut fires once");
+    Check(keys.Poll(true,input)==0,"Held compare key does not flicker");
+    Check(keys.Poll(false,input)==EditorKeys::LostFocus,"Compare respects focus loss");
+    Check(keys.Poll(true,input)==0,"Held compare key on focus return does not toggle");
     std::puts("PASS: physical shortcuts, no Windows messages, deduplication, focus gating and held-key protection.");
 }
