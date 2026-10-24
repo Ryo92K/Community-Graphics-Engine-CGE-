@@ -30,34 +30,11 @@ Other game versions are not supported by this alpha.
 
 3. Launch Skyrim through SKSE.
 
-4. Press **F10** or **Shift+Enter** to open the menu.
+4. Press **F1** to open the menu.
 
 
 
 The archive contains SKSE/Plugins/CGE.dll and SKSE/Plugins/CGE.ini.
-
-
-## Controls
-
-
-
-| Action | Shortcut |
-
-| --- | --- |
-
-| Open menu | F10 or Shift+Enter |
-
-| Close menu | Escape |
-
-| Save settings | F6 |
-
-| Reset settings | F7 |
-
-| Toggle Effets | F8 |
-
-
-
-The menu also has Save, Reset and Close buttons. Default settings leave the image unchanged.
 
 
 
