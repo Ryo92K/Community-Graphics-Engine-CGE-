@@ -1,0 +1,87 @@
+#include "skse_api.h"
+#include "startup_hook.h"
+#include "graphics_host.h"
+#include "input_capture.h"
+#include <cstdio>
+#include <cstdarg>
+#include <mutex>
+namespace {
+HMODULE module{};
+std::filesystem::path directory,logPath;
+std::mutex logMutex;
+PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN original{};
+bool loaded{};
+void Log(const char* format,...) {
+    if(logPath.empty())return;
+    char text[2048]{};va_list args;va_start(args,format);vsnprintf_s(text,sizeof(text),_TRUNCATE,format,args);va_end(args);
+    std::lock_guard lock(logMutex);
+    auto file=CreateFileW(logPath.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,
+        nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return;
+    DWORD written{};WriteFile(file,text,static_cast<DWORD>(strnlen_s(text,sizeof(text))),&written,nullptr);
+    WriteFile(file,"\r\n",2,&written,nullptr);CloseHandle(file);
+}
+HRESULT WINAPI OnCreation(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE software,UINT flags,
+    const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,const DXGI_SWAP_CHAIN_DESC* desc,
+    IDXGISwapChain** chain,ID3D11Device** device,D3D_FEATURE_LEVEL* selected,ID3D11DeviceContext** context) {
+    if(!original)return E_UNEXPECTED;
+    const auto result=original(adapter,driver,software,flags,levels,count,sdk,desc,chain,device,selected,context);
+    if(SUCCEEDED(result) && chain && *chain) {
+        try {
+            cge::graphics::ComPtr<ID3D11Device> actual;
+            if(device && *device)actual=*device;else (*chain)->GetDevice(IID_PPV_ARGS(&actual));
+            if(actual && cge::graphics::Attach(*chain,actual.Get(),directory,[](const std::string& s){Log("%s",s.c_str());})) {
+                auto* raw=*chain;*chain=cge::graphics::Wrap(raw);
+                if(*chain==raw){cge::graphics::Detach(raw);Log("CGE swapchain wrapper unavailable");}
+                else Log("CGE SKSE renderer attached");
+            }
+        }catch(const std::exception& e){Log("CGE graphics setup skipped: %s",e.what());}catch(...){Log("CGE graphics setup skipped");}
+    }return result;
+}
+}
+extern "C" {
+__declspec(dllexport) constinit cge::skse::Metadata SKSEPlugin_Version={
+    1,cge::skse::Version,"Community Graphics Engine","CGE contributors","",
+    1,0,{cge::skse::Runtime,0},0
+};
+__declspec(dllexport) bool SKSEPlugin_Query(const cge::skse::Interface* api,cge::skse::Info* info) {
+    if(!info)return false;
+    *info={1,"Community Graphics Engine",cge::skse::Version};
+    return cge::skse::Compatible(api);
+}
+__declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
+    if(!cge::skse::Compatible(api))return false;
+    if(loaded)return true;
+    try {
+        wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
+        if(!length || length>=ARRAYSIZE(path))return false;
+        directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
+        Log("Community Graphics Engine (CGE) 0.1alpha | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        // A root injector would also see device creation and may install a second editor.
+        // Reject that migration conflict before modifying any executable import.
+        if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
+            wchar_t runtimePath[32768]{},systemPath[MAX_PATH]{};
+            const auto runtimeLength=GetModuleFileNameW(runtime,runtimePath,32768);
+            const auto systemLength=GetSystemDirectoryW(systemPath,MAX_PATH);
+            if(!runtimeLength || runtimeLength>=32768 || !systemLength || systemLength>=MAX_PATH ||
+                _wcsicmp(runtimePath,(std::wstring(systemPath)+L"\\d3d11.dll").c_str())) {
+                Log("CGE initialization refused: non-system d3d11.dll is already loaded. Remove the previous root injector before this trial.");
+                return false;
+            }
+        }
+        std::string error;
+        if(!cge::startup::HookCreation(GetModuleHandleW(nullptr),OnCreation,original,error)) {
+            Log("CGE initialization failed: %s",error.c_str());return false;
+        }
+        loaded=true;
+        Log("CGE SKSE loaded; graphics creation hook ready; configuration=%ls",(directory/"CGE.ini").c_str());
+        return true;
+    }catch(...){Log("CGE SKSE initialization failed");return false;}
+}
+}
+BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {
+    if(reason==DLL_PROCESS_ATTACH)module=instance;
+    if(reason==DLL_PROCESS_DETACH){cge::startup::Shutdown();cge::input::Shutdown();}
+    return TRUE;
+}
+
