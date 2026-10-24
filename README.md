@@ -53,6 +53,8 @@ The archive contains SKSE/Plugins/CGE.dll and SKSE/Plugins/CGE.ini.
 
 | Reset settings | F7 |
 
+| Toggle Effets | F8 |
+
 
 
 The menu also has Save, Reset and Close buttons. Default settings leave the image unchanged.
