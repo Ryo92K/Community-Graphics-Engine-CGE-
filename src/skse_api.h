@@ -1,8 +1,8 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
-// Minimal declarations for the documented SKSE plugin ABI.
-// These declarations cover only the loader ABI; cell access is isolated in startup_hook.cpp.
+                                                           
+                                                                                             
 namespace cge::skse {
 constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
 constexpr std::uint32_t Version=5u<<16;

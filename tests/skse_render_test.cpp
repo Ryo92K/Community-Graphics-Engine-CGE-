@@ -329,7 +329,7 @@ int wmain(int argc,wchar_t** argv) {
         edit(motion,1,"Motion blur enabled",0);
         edit(shared,3,"Exposure",-1);edit(shared,5,"Save",0);
         edit(shared,3,"Exposure",0);present();pixel(204);
-        // New device/chain attachment reloads the same saved CGE.ini.
+                                                                      
         context->ClearState();output.Reset();buffer.Reset();readback.Reset();chain.Reset();
         memset(rendererFixture,0,sizeof(rendererFixture));
         Check(SUCCEEDED(D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,

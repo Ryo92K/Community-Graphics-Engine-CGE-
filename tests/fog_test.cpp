@@ -74,7 +74,7 @@ int main() {
     inputs.depth.Reset();device->CreateShaderResourceView(smallDepth.Get(),nullptr,&inputs.depth);
     Check(fog.Draw(sceneView.Get(),inputs,settings,true)=="Unsupported depth dimensions","Mismatched depth size bypass");
     inputs.depth.Reset();device->CreateShaderResourceView(depth.Get(),nullptr,&inputs.depth);
-    // Exercise native 24-bit typeless depth separately from the R32 fixture.
+                                                                             
     d.Width=width;d.Format=DXGI_FORMAT_R24G8_TYPELESS;d.BindFlags=D3D11_BIND_DEPTH_STENCIL|D3D11_BIND_SHADER_RESOURCE;
     ComPtr<ID3D11Texture2D> nativeDepth;ComPtr<ID3D11DepthStencilView> dsv;
     Check(SUCCEEDED(device->CreateTexture2D(&d,nullptr,&nativeDepth)),"Typeless depth");

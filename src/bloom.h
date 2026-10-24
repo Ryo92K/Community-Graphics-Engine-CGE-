@@ -5,7 +5,7 @@
 #include <array>
 #include <string>
 namespace cge {
-// Own HDR resources; never retains a game-owned render target across frames.
+                                                                             
 class BloomRenderer {
     template<class T>using Ptr=Microsoft::WRL::ComPtr<T>;
     struct Surface {

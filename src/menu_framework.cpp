@@ -5,8 +5,8 @@
 #include <cmath>
 namespace cge::menu {
 namespace {
-// Minimal declarations of the documented SMF export ABI. No ImGui context,
-// backend, input hook, framework implementation or consumer header is embedded.
+                                                                           
+                                                                                
 struct Vec2 {float x{},y{};};
 using Page=void(__stdcall*)();
 struct Api {
@@ -139,7 +139,7 @@ void Render(unsigned page) noexcept {
             if(page==5 && !view.fog.empty())Text(view.fog.c_str());
         }
         Footer(settings,page==0);
-    }catch(...){/* Never propagate an exception into the framework's render loop. */}
+    }catch(...){                                                                    }
 }
 void __stdcall General(){Render(0);}
 void __stdcall Profiles(){Render(1);}
@@ -171,8 +171,8 @@ bool Register(std::string& status) {
         Bind(module,"igBeginDisabled",candidate.beginDisabled) &&
         Bind(module,"igEndDisabled",candidate.endDisabled);
     if(!complete){status="CGE menu unavailable: SKSE Menu Framework exports are incomplete";return false;}
-    // This export is an API generation (the current provider returns 3.8),
-    // not the package version 3.14/3.18. Validate generation plus capabilities.
+                                                                           
+                                                                                
     const float version=candidate.version();
     if(!std::isfinite(version) || version<3.0f) {
         status="CGE menu unavailable: SKSE Menu Framework 3 API required; update the framework";return false;

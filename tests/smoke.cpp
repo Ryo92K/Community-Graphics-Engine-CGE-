@@ -111,7 +111,7 @@ int wmain(int argc, wchar_t** argv) {
     const HRESULT actual = create(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0,
         0, nullptr, nullptr, nullptr);
     Check(FAILED(expected) && expected == actual, "Invalid SDK HRESULT preserved");
-    // A hidden window avoids interrupting the user while exercising real DXGI presentation.
+                                                                                            
     HWND window = CreateWindowExW(0, L"STATIC", L"Community Graphics Engine integration test",
         WS_OVERLAPPEDWINDOW, 0, 0, 128, 128, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     Check(window != nullptr, "Create hidden window");

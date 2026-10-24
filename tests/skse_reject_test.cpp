@@ -19,7 +19,7 @@ int wmain(int argc,wchar_t** argv) {
     auto load=reinterpret_cast<bool(*)(const cge::skse::Interface*)>(GetProcAddress(module,"SKSEPlugin_Load"));
     if(!load)return 1;
     cge::skse::Interface api{0x02030010,cge::skse::Runtime,0,0};
-    // This process intentionally has no D3D11 import: activation must fail honestly.
+                                                                                     
     if(load(&api)){std::puts("FAIL: plugin reported ready without a creation hook");return 1;}
     if(argc==4) {
         std::ifstream file(root/"CGE.log");std::string text((std::istreambuf_iterator<char>(file)),{});

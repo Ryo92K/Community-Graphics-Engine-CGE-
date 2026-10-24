@@ -63,8 +63,8 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
         Log("Community Graphics Engine (CGE) 0.5.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
-        // A root injector would also see device creation and may install a second editor.
-        // Reject that migration conflict before modifying any executable import.
+                                                                                          
+                                                                                 
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
             wchar_t runtimePath[32768]{},systemPath[MAX_PATH]{};
             const auto runtimeLength=GetModuleFileNameW(runtime,runtimePath,32768);
@@ -85,7 +85,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         if(executableLength && executableLength<ARRAYSIZE(executablePath)) {
             auto virtualLibrary=std::filesystem::path(executablePath).parent_path()/
                 "Data"/"SKSE"/"Plugins"/"versionlib-1-7-104-0.bin";
-            // Open through the game's Data path so MO2 can supply another mod's file.
+                                                                                      
             std::error_code ec;
             if(std::filesystem::exists(virtualLibrary,ec))library=virtualLibrary;
         }

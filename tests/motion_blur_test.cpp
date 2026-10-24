@@ -86,7 +86,7 @@ int main() {
     halfDesc.MipLevels=halfDesc.ArraySize=1;halfDesc.SampleDesc.Count=1;
     halfDesc.Format=DXGI_FORMAT_R16G16_FLOAT;halfDesc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
     std::vector<std::uint16_t> halfData(32*16*2);
-    for(unsigned i=0;i<32*16;++i)halfData[i*2]=0x3400; // Native half-float 0.25.
+    for(unsigned i=0;i<32*16;++i)halfData[i*2]=0x3400;                           
     D3D11_SUBRESOURCE_DATA halfInitial{halfData.data(),32*4,0};
     ComPtr<ID3D11Texture2D> halfVelocity;
     Check(SUCCEEDED(device->CreateTexture2D(&halfDesc,&halfInitial,&halfVelocity)),"Native half-float velocity");

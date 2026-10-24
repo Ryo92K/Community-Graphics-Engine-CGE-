@@ -56,7 +56,7 @@ void Prepare(Host& host) {
     host.color=host.transition.Update(host.settings,environment,seconds,hour);
     host.frameSeconds=frameSeconds;host.hour=hour;host.changedLocation=changedLocation;
 }
-// Graphics teardown is explicit; no COM work runs from CRT shutdown under loader lock.
+                                                                                       
 Host& Data(){static auto* host=new Host;return *host;}
 }
 bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::path& directory,Reporter report) {
@@ -117,7 +117,7 @@ void HDR(ID3D11ShaderResourceView* source) noexcept {
     }catch(const std::exception& e){auto& host=Data();if(host.report)host.report(std::string("CGE bloom skipped: ")+e.what());}
     catch(...){}
 }
-// Skyrim calls this before drawing Scaleform menus and the HUD.
+                                                                
 void Scene() noexcept {
     try {
         auto& host=Data();std::lock_guard lock(host.mutex);
@@ -177,7 +177,7 @@ bool SaveSettings() {
 }
 void Frame(IDXGISwapChain* chain) noexcept {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
-    // SKSE Menu Framework owns presentation and input. CGE never draws over the HUD.
+                                                                                     
     host.sceneProcessed=host.prepared=host.hdrProcessed=false;
 }
 }

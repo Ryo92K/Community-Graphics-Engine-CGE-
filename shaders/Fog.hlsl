@@ -1,4 +1,4 @@
-// Distance fog on native linear HDR color and forward-Z depth.
+                                                               
 Texture2D<float4> Scene : register(t0);
 Texture2D<float> Depth : register(t1);
 cbuffer FogControls : register(b0) {
@@ -17,7 +17,7 @@ float4 FogPixel(float4 position : SV_Position) : SV_Target {
     int2 pixel=int2(position.xy);
     float4 source=Scene.Load(int3(pixel,0));
     float z=Depth.Load(int3(pixel,0));
-    // The clear-depth sky has no surface distance and keeps its native rendering.
+                                                                                  
     if(!isfinite(z) || z<0 || z>=1 || !all(isfinite(source.rgb)))return source;
     float denominator=FarPlane*(1-z)+NearPlane*z;
     float distance=(NearPlane/denominator)*FarPlane;

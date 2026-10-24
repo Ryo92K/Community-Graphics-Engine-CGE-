@@ -74,7 +74,7 @@ int main() {
     Check(count==1 && restored.TopLeftX==3 && restored.Width==12 && restoredTarget.Get()==target.Get(),"Restore complete game output state");
     context->ClearState();resize(65,33);upload();bloom.Draw(input.Get(),settings,true);
     Check(read(width/2+5,height/2)>0.05f,"Odd-resolution resize rebuilds resources");
-    // Real Skyrim uses FP16; repeat with that format and reject LDR input.
+                                                                           
     D3D11_TEXTURE2D_DESC d{};scene->GetDesc(&d);d.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
     ComPtr<ID3D11Texture2D> half;ComPtr<ID3D11ShaderResourceView> halfView;ComPtr<ID3D11RenderTargetView> halfTarget;
     Check(SUCCEEDED(device->CreateTexture2D(&d,nullptr,&half)),"FP16 target");

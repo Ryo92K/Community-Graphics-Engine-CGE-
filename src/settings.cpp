@@ -96,7 +96,7 @@ Settings Settings::Load(const std::filesystem::path& path) {
         }
     };
     apply("Interior",result.interior);
-    apply("Exterior",result.exterior); // Legacy 0.2 profile.
+    apply("Exterior",result.exterior);                       
     apply("ExteriorDay",result.exterior);
     result.exteriorNight=result.exterior;
     apply("ExteriorNight",result.exteriorNight);

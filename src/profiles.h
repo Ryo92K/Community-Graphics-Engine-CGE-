@@ -11,13 +11,13 @@ inline float NightWeight(float hour,float dayHour=6,float nightHour=20) noexcept
     nightHour=std::isfinite(nightHour)?std::clamp(nightHour,13.0f,23.0f):20;
     const float phase=std::fmod(hour-dayHour+24.0f,24.0f);
     const float daylight=nightHour-dayHour;
-    // One game hour around each boundary, including dawn crossing midnight.
+                                                                            
     if(phase>=23.5f)return 1-Smooth(phase-23.5f);
     if(phase<0.5f)return 1-Smooth(phase+0.5f);
     return Smooth(phase-daylight+0.5f);
 }
 
-// Retarget from the displayed value so a second doorway never causes a jump.
+                                                                             
 class ProfileTransition {
     ColorSettings current_,origin_;
     Environment environment_{Environment::Unknown};
@@ -38,7 +38,7 @@ class ProfileTransition {
 public:
     void Reset() noexcept {*this=ProfileTransition{};}
     ColorSettings Update(const Settings& settings,Environment environment,float seconds,float hour=-1) noexcept {
-        // Keep the last valid location through temporary missing cells/loading.
+                                                                                
         if(environment==Environment::Unknown && initialized_)return current_;
         const bool validHour=ValidGameHour(hour),hadHour=ValidGameHour(lastHour_);
         float clockDifference=0;

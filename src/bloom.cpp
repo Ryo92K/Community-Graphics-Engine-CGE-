@@ -79,7 +79,7 @@ std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSetti
     D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
     if(desc.ArraySize!=1 || desc.MipLevels!=1 || desc.SampleDesc.Count!=1 || !desc.Width || !desc.Height ||
         !(desc.BindFlags&D3D11_BIND_RENDER_TARGET))return "Unsupported HDR target";
-    // A typed private copy may read an equivalent typeless native resource.
+                                                                            
     if(!source_.texture || source_.width!=desc.Width || source_.height!=desc.Height || sourceFormat_!=view.Format) {
         if(!Resize(desc.Width,desc.Height,view.Format))return "Bloom allocation failed";
     }

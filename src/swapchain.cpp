@@ -96,7 +96,7 @@ public:
 IDXGISwapChain* Wrap(IDXGISwapChain* chain) noexcept {
     auto* wrapper=new(std::nothrow) SwapChain(chain);
     if(!wrapper)return chain;
-    chain->Release(); // Transfer the caller's initial reference to the wrapper.
+    chain->Release();                                                           
     return wrapper;
 }
 }

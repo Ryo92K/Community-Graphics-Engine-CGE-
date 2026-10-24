@@ -1,4 +1,4 @@
-// Test-only host for the public SMF ABI. Never installed or packaged.
+                                                                      
 #include <windows.h>
 #include <string>
 #include <vector>

@@ -1,4 +1,4 @@
-"""Verify the CGE build boundary. This is an engineering check, not a legal opinion."""
+                                                                                       
 
 import hashlib
 

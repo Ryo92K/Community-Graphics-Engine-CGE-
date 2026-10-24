@@ -69,7 +69,7 @@ bool HookCreation(HMODULE executable,PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN repl
             if(!prior || prior==reinterpret_cast<void*>(replacement)){error="Creation slot is invalid or already redirected";return false;}
             DWORD protection{};
             if(!VirtualProtect(const_cast<void**>(slot),sizeof(void*),PAGE_READWRITE,&protection)){error="Creation import cannot be updated";return false;}
-            // Publish the delegate before replacing the pointer, preserving earlier hooks.
+                                                                                           
             original=reinterpret_cast<PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN>(prior);
             InterlockedExchangePointer(slot,reinterpret_cast<void*>(replacement));
             DWORD ignored{};VirtualProtect(const_cast<void**>(slot),sizeof(void*),protection,&ignored);
@@ -83,8 +83,8 @@ bool HookCreation(HMODULE executable,PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN repl
 namespace {
 unsigned char* ResolveV5(HMODULE executable,const std::filesystem::path& library,
     std::uint32_t id,std::size_t bytes,std::string& error) {
-    // Address Library V5: 96-byte header followed by one uint32 RVA per ID.
-    // Only the verified 1.7.104 ABI/prologue is accepted by this build.
+                                                                            
+                                                                        
     std::ifstream input(library,std::ios::binary|std::ios::ate);
     if(!input){error="Address Library V5 missing; install the 1.7.104 library through the mod manager";return nullptr;}
     const auto length=input.tellg();input.seekg(0);
@@ -124,7 +124,7 @@ bool AcquireNativeView(void* address,ID3D11ShaderResourceView** output) noexcept
     HMODULE owner{};
     if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
         reinterpret_cast<LPCWSTR>(query),&owner) || owner!=GetModuleHandleW(L"d3d11.dll"))return false;
-    // Only a native D3D11 COM object may be queried; game objects are rejected above.
+                                                                                      
     __try {
         return SUCCEEDED(static_cast<IUnknown*>(address)->QueryInterface(__uuidof(ID3D11ShaderResourceView),
             reinterpret_cast<void**>(output)));
@@ -151,7 +151,7 @@ MotionInputs PollMotion() noexcept {
         !ReadMemory(temporal+0x18,&taa,sizeof(taa)))return result;
     if(taa!=1){result.state=MotionState::TaaDisabled;return result;}
     void *velocity{},*depth{};
-    // Runtime 1.7.104: target 7 SRV at A58 + 7*30 + 18, main depth SRV at 2018 + 88.
+                                                                                     
     if(!ReadMemory(nativeRenderer+0xbc0,&velocity,sizeof(velocity)) ||
         !ReadMemory(nativeRenderer+0x20a0,&depth,sizeof(depth)))return result;
     ID3D11ShaderResourceView *v{},*d{};
@@ -165,7 +165,7 @@ bool InitializeFog(HMODULE executable,const std::filesystem::path& library,std::
     auto* worldRoot=ResolveV5(executable,library,403513,sizeof(void*),error);
     auto* getter=ResolveV5(executable,library,36609,15,error);
     if(!renderer || !worldRoot || !getter)return false;
-    // WorldRootCamera on 1.7.104: load the root singleton, then its camera at 0x128.
+                                                                                     
     constexpr unsigned char load[]={0x48,0x8b,0x05};
     constexpr unsigned char tail[]={0x48,0x8b,0x80,0x28,0x01,0,0,0xc3};
     std::int32_t displacement{};memcpy(&displacement,getter+3,4);
@@ -180,7 +180,7 @@ FogInputs PollFog() noexcept {
     if(!fogNativeRenderer || !worldRootSingleton)return result;
     const unsigned char *root{},*camera{},*sameRoot{},*sameCamera{};
     float planes[2]{};unsigned char orthographic{};
-    // NiCamera's 1.7.104 frustum: near/far at 0x160/0x164, orthographic at 0x168.
+                                                                                  
     if(!ReadMemory(worldRootSingleton,&root,sizeof(root)) || !root ||
         !ReadMemory(root+0x128,&camera,sizeof(camera)) || !camera ||
         !ReadMemory(camera+0x160,planes,sizeof(planes)) ||
@@ -221,7 +221,7 @@ bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std
 float PollGameHour() noexcept {
     const unsigned char *calendar{},*global{},*sameCalendar{},*sameGlobal{};
     float hour{};
-    // Calendar::gameHour at 0x20; TESGlobal::value at 0x34 on runtime 1.7.104.
+                                                                               
     if(!ReadMemory(calendarSingleton,&calendar,sizeof(calendar)) || !calendar ||
         !ReadMemory(calendar+0x20,&global,sizeof(global)) || !global ||
         !ReadMemory(global+0x34,&hour,sizeof(hour)) || !std::isfinite(hour) || hour<0 || hour>24 ||
@@ -230,8 +230,8 @@ float PollGameHour() noexcept {
     return hour==24?0:hour;
 }
 Environment PollEnvironment() noexcept {
-    // Runtime 1.7.104: reference parentCell at 0x60, cell interior flag at 0x40.
-    // Copy bounded fields instead of dereferencing objects during cell changes.
+                                                                                 
+                                                                                
     const unsigned char *player{},*cell{},*again{},*samePlayer{};
     std::uint32_t formId{};std::uint16_t flags{};
     if(!ReadMemory(playerSingleton,&player,sizeof(player)) || !player ||
@@ -257,8 +257,8 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
         memcmp(entry,interfacePrologue.data(),interfacePrologue.size())) {
         error="Interface prologue differs or another plugin already hooks it; scene effects disabled";return false;
     }
-    // The verified prefix consists only of whole, non-relative instructions.
-    // The relay reproduces it without changing registers or the stack layout.
+                                                                             
+                                                                              
     auto* relay=static_cast<unsigned char*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if(!relay){error="Interface relay allocation failed";return false;}
     memcpy(relay,entry,interfacePrologue.size());
@@ -288,7 +288,7 @@ const unsigned char* bloomRenderer{};
 unsigned char* tonemapCall{};
 std::array<unsigned char,5> tonemapOriginal{},tonemapPatch{};
 void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
-    // This delegate replaces only the main cinematic tone-mapping call.
+                                                                        
     void* raw{};
     if(source<114 && ReadMemory(bloomRenderer+0xa58+std::size_t(source)*0x30+0x18,&raw,sizeof(raw))) {
         ID3D11ShaderResourceView* view{};

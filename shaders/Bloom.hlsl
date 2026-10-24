@@ -1,4 +1,4 @@
-// CGE HDR bloom. Operates on linear scene values before Skyrim's tone mapping.
+                                                                               
 Texture2D<float4> Input : register(t0);
 Texture2D<float4> Detail : register(t1);
 SamplerState LinearClamp : register(s0);
@@ -25,7 +25,7 @@ float3 Extract(float3 color) {
     return color*(max(brightness-Threshold,soft)/max(brightness,0.0001));
 }
 float4 BrightPixel(float4 p : SV_Position) : SV_Target {
-    // Threshold individual texels before averaging so subpixel highlights survive.
+                                                                                   
     uint width,height;Input.GetDimensions(width,height);
     int2 start=int2(p.xy)*2;
     float3 result=0;
@@ -52,7 +52,7 @@ float3 Tent(float2 uv) {
 }
 float4 UpPixel(float4 p : SV_Position) : SV_Target {
     float2 uv=p.xy/OutputSize;
-    // Normalized combination keeps intensity independent of pyramid depth.
+                                                                           
     return float4(lerp(Detail.Load(int3(int2(p.xy),0)).rgb,Tent(uv),Blend),0);
 }
 float4 CompositePixel(float4 p : SV_Position) : SV_Target {
