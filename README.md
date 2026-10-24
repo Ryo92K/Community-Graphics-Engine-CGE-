@@ -76,9 +76,6 @@ Lighting, weather, HDR rendering, depth effects and ambient occlusion are not im
 
 
 
-See [installation details](docs/INSTALLATION.txt), [test coverage](docs/VALIDATION.md) and the [roadmap](docs/ROADMAP.md).
-
-
 
 ## Building
 
