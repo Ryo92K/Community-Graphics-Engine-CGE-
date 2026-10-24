@@ -109,9 +109,5 @@ CGE code is licensed under [MIT](LICENSE). Dear ImGui and its bundled components
 
 ## Technical references
 
-The interface boundary is DrawInterfaceStart (AE relocation ID 82084), also used
-by [Community Shaders](https://github.com/doodlum/skyrim-community-shaders/blob/main/src/Hooks.cpp).
-The Address Library V5 layout is documented in
-[CommonLib](https://github.com/alandtse/CommonLibVR/blob/ng/include/REL/IDDB.h).
-CGE implements its own reader and verified-prefix trampoline.
+The interface boundary is DrawInterfaceStart (AE relocation ID 82084).
 
