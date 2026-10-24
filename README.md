@@ -28,7 +28,7 @@ Other game versions are not supported by this build. Address Library and additio
 
 
 
-1. Install CGE-0.1alpha-SKSE-MO2-Vortex.zip with MO2 or Vortex.
+1. Install CGE with MO2 or Vortex.
 
 2. Enable the mod. Deploy it if you use Vortex.
 
