@@ -55,5 +55,31 @@ int wmain(int argc,wchar_t** argv) {
     profiles=Settings{};profiles.transitionSeconds=std::numeric_limits<float>::infinity();
     Check(!profiles.Save(path),"Non-finite transition duration cannot be saved");
 
+    {std::ofstream file(path);file<<"[Profiles]\nSeparate=true\n[Exterior]\nExposureStops=-0.7\nGamma=1.3\n[Interior]\nExposureStops=0.2\n";}
+    auto legacy02=Settings::Load(path);
+    Check(legacy02.exterior==legacy02.exteriorNight && legacy02.exterior.exposure==-0.7f && legacy02.interior.exposure==0.2f,"0.2 outdoor profile migrates to identical day and night values");
+    legacy02.exteriorNight.exposure=1.5f;legacy02.dayHour=7;legacy02.nightHour=21;
+    Check(legacy02.Save(path),"Save distinct night values and schedule");
+    auto dayNight=Settings::Load(path);
+    Check(dayNight.exterior.exposure==-0.7f && dayNight.exteriorNight.exposure==1.5f && dayNight.dayHour==7 && dayNight.nightHour==21,"Day/night profiles and schedule roundtrip");
+    {std::ofstream file(path);file<<"[ExteriorNight]\nExposureStops=2\nGamma=nan\n[ExteriorDay]\nGamma=1.6\n[Profiles]\nDayHour=99\nNightHour=-1\n";}
+    auto schedule=Settings::Load(path);
+    Check(schedule.exteriorNight.gamma==1.6f && schedule.exteriorNight.exposure==2 && schedule.dayHour==11 && schedule.nightHour==13,"Night fields inherit day values independent of section order; schedule is bounded");
+    dayNight.exteriorNight.gamma=std::numeric_limits<float>::quiet_NaN();
+    Check(!dayNight.Save(path),"Non-finite night profile is rejected");
+    dayNight=Settings{};dayNight.dayHour=std::numeric_limits<float>::infinity();
+    Check(!dayNight.Save(path),"Non-finite schedule is rejected");
+
+    Settings motion;motion.motion.enabled=true;motion.motion.strength=1.25f;motion.motion.radius=37;motion.motion.samples=16;
+    Check(motion.Save(path),"Save motion blur settings");
+    auto motionReload=Settings::Load(path);
+    Check(motionReload.motion.enabled && motionReload.motion.strength==1.25f && motionReload.motion.radius==37 && motionReload.motion.samples==16,"Motion blur settings persist across reloads");
+    {std::ofstream file(path);file<<"[MotionBlur]\nEnabled=true\nStrength=99\nMaxRadius=-5\nSamples=17\n";}
+    auto motionBounds=Settings::Load(path);
+    Check(motionBounds.motion.enabled && motionBounds.motion.strength==2 && motionBounds.motion.radius==1 && motionBounds.motion.samples==12,"Motion bounds and invalid quality are handled");
+    motion.motion.strength=std::numeric_limits<float>::quiet_NaN();
+    Check(!motion.Save(path),"Invalid motion values cannot overwrite settings");
+    {std::ofstream file(path);file<<"[Color]\nGamma=1.2\n";}
+    Check(!Settings::Load(path).motion.enabled,"Older configurations keep motion blur disabled");
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

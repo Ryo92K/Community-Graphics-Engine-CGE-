@@ -54,3 +54,49 @@ Layout and singleton references:
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectREFR.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESObjectCELL.h
 https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/P/PlayerCharacter.cpp
+
+## Game clock
+
+The 1.7.104 clock adapter resolves Calendar singleton ID 400447. It reads
+Calendar::gameHour at offset 0x20 and TESGlobal::value at offset 0x34 using
+bounded copies and pointer consistency checks. Values outside 0..24 and
+non-finite samples are rejected. No system clock is used.
+
+References:
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/C/Calendar.h
+https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/C/Calendar.cpp
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/T/TESGlobal.h
+
+## Native motion inputs
+
+The optional motion adapter targets Steam 1.7.104 and resolves Renderer ID 411393,
+ImageSpaceManager ID 414660 and UI ID 400327. Native motion target 7 is read from
+Renderer + 0xBC0 (SRV), and main depth from Renderer + 0x20A0 (SRV). The TAA helper
+is read at ImageSpaceManager + 0x1F0, with enabled state at helper + 0x18.
+UI + 0x160 provides the pause count.
+
+Pointers are copied with bounded reads. Only native d3d11.dll COM views are
+queried; the renderer also checks device ownership, view formats and dimensions.
+No reference mod files, ReShade runtime or third-party shader implementation are
+bundled. Motion uses CGE's own shader and configuration.
+
+ABI and native vector convention references:
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/Renderer.h
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/RenderTargetData.h
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/I/ImageSpaceManager.h
+https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/U/UI.h
+https://github.com/community-shaders/skyrim-community-shaders/blob/main/package/Shaders/Common/MotionBlur.hlsli
+
+## Inter menu font
+
+Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter).
+The unmodified variable font is distributed under SIL Open Font License 1.1;
+see licenses/Inter-OFL.txt. CGE renders its default regular face at 16px.
+
+Source commit: 0b58fb370093f9a9f4ff785d94405710b79de67c
+Source: https://github.com/google/fonts/tree/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter
+Font SHA256: 29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031
+
+Build/install copies assets/fonts/Inter.ttf to SKSE/Plugins/CGE/Fonts/Inter.ttf.
+The menu uses the embedded Dear ImGui font if this optional file is missing.
+No fonts are installed into Windows.

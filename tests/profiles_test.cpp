@@ -29,5 +29,24 @@ int main() {
     Check(blend.Update(s,Environment::Interior,0).exposure==1,"Zero duration switches immediately");
     blend.Reset();Check(blend.Update(s,Environment::Interior,0).exposure==1,"Reset removes state from previous sessions");
     Check(blend.Update(s,Environment::Interior,-10).exposure==1,"Negative delta cannot reverse a transition");
+    Check(NightWeight(12)==0 && NightWeight(0)==1 && NightWeight(24)==1,"Day, night and midnight normalization");
+    Check(Near(NightWeight(6),0.5f) && Near(NightWeight(20),0.5f),"Dawn and dusk are centered on schedule boundaries");
+    Check(NightWeight(5.75f)>NightWeight(6) && NightWeight(6)>NightWeight(6.25f),"Dawn blend decreases continuously");
+    Check(NightWeight(19.75f)<NightWeight(20) && NightWeight(20)<NightWeight(20.25f),"Dusk blend increases continuously");
+    Check(Near(NightWeight(0,0,23),0.5f) && std::abs(NightWeight(23.999f,0,23)-NightWeight(0,0,23))<0.002f,"Midnight dawn wraps continuously");
+    Settings clock;clock.SetSeparateProfiles(true);clock.exterior.exposure=-1;clock.exteriorNight.exposure=1;clock.interior.exposure=0.25f;clock.transitionSeconds=2;
+    ProfileTransition time;
+    Check(time.Update(clock,Environment::Exterior,0,12).exposure==-1,"Noon selects the day profile");
+    Check(time.Update(clock,Environment::Exterior,0,23).exposure==-1,"Waiting across hours starts from the displayed value");
+    Check(Near(time.Update(clock,Environment::Exterior,1,23).exposure,0),"Time jumps blend over the real-time duration");
+    Check(time.Update(clock,Environment::Exterior,1,23).exposure==1,"Night transition completes");
+    Check(time.Update(clock,Environment::Exterior,0,-1).exposure==1,"Missing clock retains the last valid hour");
+    clock.transitionSeconds=0;
+    Check(time.Update(clock,Environment::Interior,0,12).exposure==0.25f,"Interior ignores time of day");
+    Check(time.Update(clock,Environment::Interior,0,23).exposure==0.25f,"Waiting indoors does not change the interior profile");
+    time.Reset();
+    Check(Near(time.Update(clock,Environment::Exterior,0,20).exposure,0),"Twilight mixes complete color profiles");
+    clock.SetSeparateProfiles(false);clock.exposure=0.4f;
+    Check(time.Update(clock,Environment::Exterior,0,0).exposure==0.4f,"Shared mode ignores the day/night schedule");
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

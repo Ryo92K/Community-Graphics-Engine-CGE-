@@ -66,6 +66,9 @@ int wmain(int argc,wchar_t** argv) {
     bool ansi=std::wstring(argv[3])==L"--ansi";
     fs::path root=fs::absolute(argv[2]);fs::create_directories(root);
     fs::copy_file(argv[1],root/"d3d11.dll",fs::copy_options::overwrite_existing);
+    fs::create_directories(root/"CGE"/"Fonts");
+    fs::copy_file(fs::absolute(argv[1]).parent_path()/"CGE"/"Fonts"/"Inter.ttf",
+        root/"CGE"/"Fonts"/"Inter.ttf",fs::copy_options::overwrite_existing);
     auto config=root/"CGE.ini";
     auto module=LoadLibraryExW((root/"d3d11.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     Check(module!=nullptr,"Load CGE");

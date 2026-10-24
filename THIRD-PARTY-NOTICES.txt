@@ -31,3 +31,9 @@ These upstream data are unmodified; their attribution is retained.
 License: Creative Commons Attribution 4.0 International
 https://creativecommons.org/licenses/by/4.0/legalcode
 CGE's English UI does not request these glyph ranges.
+
+Inter
+Copyright 2020 The Inter Project Authors (https://github.com/rsms/inter)
+SIL Open Font License 1.1: licenses/Inter-OFL.txt
+Unmodified font bundled at SKSE/Plugins/CGE/Fonts/Inter.ttf.
+Source: https://github.com/google/fonts/tree/0b58fb370093f9a9f4ff785d94405710b79de67c/ofl/inter

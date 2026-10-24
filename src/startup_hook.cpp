@@ -4,6 +4,7 @@
 #include <fstream>
 #include <array>
 #include <cstdint>
+#include <cmath>
 namespace cge::startup {
 namespace {
 void* volatile* installedSlot{};
@@ -14,6 +15,9 @@ using InterfaceDraw=void(*)(std::int64_t);
 InterfaceDraw drawInterface{};
 void(*beforeInterface)() noexcept{};
 const void* playerSingleton{};
+const void* calendarSingleton{};
+const unsigned char* nativeRenderer{};
+const void *uiSingleton{},*imageSpaceSingleton{};
 unsigned char* interfaceEntry{};
 constexpr std::array<unsigned char,15> interfacePrologue={
     0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50
@@ -110,6 +114,50 @@ bool ReadMemory(const void* source,void* target,std::size_t size) noexcept {
     return source && ReadProcessMemory(GetCurrentProcess(),source,target,size,&bytes) && bytes==size;
 }
 }
+namespace {
+bool AcquireNativeView(void* address,ID3D11ShaderResourceView** output) noexcept {
+    *output=nullptr;
+    void *table{},*query{};
+    if(!ReadMemory(address,&table,sizeof(table)) || !ReadMemory(table,&query,sizeof(query)))return false;
+    HMODULE owner{};
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(query),&owner) || owner!=GetModuleHandleW(L"d3d11.dll"))return false;
+    // Only a native D3D11 COM object may be queried; game objects are rejected above.
+    __try {
+        return SUCCEEDED(static_cast<IUnknown*>(address)->QueryInterface(__uuidof(ID3D11ShaderResourceView),
+            reinterpret_cast<void**>(output)));
+    }__except(EXCEPTION_EXECUTE_HANDLER) {*output=nullptr;return false;}
+}
+}
+bool InitializeMotion(HMODULE executable,const std::filesystem::path& library,std::string& error) {
+    auto* renderer=ResolveV5(executable,library,411393,0x20a8,error);
+    auto* ui=ResolveV5(executable,library,400327,sizeof(void*),error);
+    auto* manager=ResolveV5(executable,library,414660,sizeof(void*),error);
+    if(!renderer || !ui || !manager)return false;
+    nativeRenderer=renderer;uiSingleton=ui;imageSpaceSingleton=manager;return true;
+}
+MotionInputs PollMotion() noexcept {
+    MotionInputs result;
+    if(!nativeRenderer)return result;
+    const unsigned char *ui{},*manager{},*temporal{};
+    std::uint32_t pauses{};unsigned char taa{};
+    if(!ReadMemory(uiSingleton,&ui,sizeof(ui)) || !ui ||
+        !ReadMemory(ui+0x160,&pauses,sizeof(pauses)))return result;
+    if(pauses){result.state=MotionState::Paused;return result;}
+    if(!ReadMemory(imageSpaceSingleton,&manager,sizeof(manager)) || !manager ||
+        !ReadMemory(manager+0x1f0,&temporal,sizeof(temporal)) || !temporal ||
+        !ReadMemory(temporal+0x18,&taa,sizeof(taa)))return result;
+    if(taa!=1){result.state=MotionState::TaaDisabled;return result;}
+    void *velocity{},*depth{};
+    // Runtime 1.7.104: target 7 SRV at A58 + 7*30 + 18, main depth SRV at 2018 + 88.
+    if(!ReadMemory(nativeRenderer+0xbc0,&velocity,sizeof(velocity)) ||
+        !ReadMemory(nativeRenderer+0x20a0,&depth,sizeof(depth)))return result;
+    ID3D11ShaderResourceView *v{},*d{};
+    if(!AcquireNativeView(velocity,&v))return result;
+    result.velocity.Attach(v);
+    if(!AcquireNativeView(depth,&d)){result.velocity.Reset();return result;}
+    result.depth.Attach(d);result.state=MotionState::Ready;return result;
+}
 bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& library,std::string& error) {
     auto* address=ResolveV5(executable,library,403521,sizeof(void*),error);
     if(!address)return false;
@@ -120,6 +168,27 @@ bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& libra
         error="Player singleton is not in readable game data";return false;
     }
     playerSingleton=address;return true;
+}
+bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std::string& error) {
+    auto* address=ResolveV5(executable,library,400447,sizeof(void*),error);
+    if(!address)return false;
+    MEMORY_BASIC_INFORMATION region{};
+    if(!VirtualQuery(address,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
+        region.Protect&(PAGE_GUARD|PAGE_NOACCESS) || !(region.Protect&(PAGE_READWRITE|PAGE_WRITECOPY))) {
+        error="Calendar singleton is not in readable game data";return false;
+    }
+    calendarSingleton=address;return true;
+}
+float PollGameHour() noexcept {
+    const unsigned char *calendar{},*global{},*sameCalendar{},*sameGlobal{};
+    float hour{};
+    // Calendar::gameHour at 0x20; TESGlobal::value at 0x34 on runtime 1.7.104.
+    if(!ReadMemory(calendarSingleton,&calendar,sizeof(calendar)) || !calendar ||
+        !ReadMemory(calendar+0x20,&global,sizeof(global)) || !global ||
+        !ReadMemory(global+0x34,&hour,sizeof(hour)) || !std::isfinite(hour) || hour<0 || hour>24 ||
+        !ReadMemory(calendar+0x20,&sameGlobal,sizeof(sameGlobal)) || sameGlobal!=global ||
+        !ReadMemory(calendarSingleton,&sameCalendar,sizeof(sameCalendar)) || sameCalendar!=calendar)return -1;
+    return hour==24?0:hour;
 }
 Environment PollEnvironment() noexcept {
     // Runtime 1.7.104: reference parentCell at 0x60, cell interior flag at 0x40.
@@ -173,7 +242,7 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     return true;
 }
 void Shutdown() noexcept {
-    playerSingleton=nullptr;
+    playerSingleton=nullptr;calendarSingleton=nullptr;nativeRenderer=nullptr;uiSingleton=imageSpaceSingleton=nullptr;
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};
         if(VirtualProtect(interfaceEntry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)) {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CommunityGraphicsEngine VERSION 0.2.0 LANGUAGES CXX RC)
+project(CommunityGraphicsEngine VERSION 0.3.0 LANGUAGES CXX RC)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "CGE requires Windows x64")
 endif()
@@ -97,4 +97,22 @@ if(BUILD_TESTING)
   add_executable(cge_profiles_test tests/profiles_test.cpp)
   target_include_directories(cge_profiles_test PRIVATE src)
   add_test(NAME cge_profiles COMMAND cge_profiles_test)
+endif()
+
+if(BUILD_TESTING)
+  add_executable(cge_motion_test tests/motion_blur_test.cpp)
+  target_include_directories(cge_motion_test PRIVATE src)
+  target_link_libraries(cge_motion_test PRIVATE cge_core d3d11)
+  add_test(NAME cge_motion_blur COMMAND cge_motion_test)
+endif()
+
+# Bundle the menu font locally; no system font installation is required.
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/CGE/Fonts")
+configure_file(assets/fonts/Inter.ttf "${CMAKE_CURRENT_BINARY_DIR}/CGE/Fonts/Inter.ttf" COPYONLY)
+install(FILES assets/fonts/Inter.ttf DESTINATION SKSE/Plugins/CGE/Fonts)
+install(FILES licenses/Inter-OFL.txt DESTINATION licenses)
+
+if(BUILD_TESTING)
+  add_test(NAME cge_menu_font_fallback COMMAND cge_skse_render_test $<TARGET_FILE:cge>
+    "${CMAKE_CURRENT_BINARY_DIR}/font-fallback" --missing-font)
 endif()

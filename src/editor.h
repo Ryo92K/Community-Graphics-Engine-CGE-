@@ -1,5 +1,6 @@
 #pragma once
 #include "settings.h"
+#include "motion_blur.h"
 #include "editor_keys.h"
 #include <d3d11.h>
 #include <imgui.h>
@@ -33,6 +34,8 @@ class Editor {
     std::vector<Message> queue_;
 
     ImGuiContext* gui_{};
+    std::vector<unsigned char> fontData_;
+    bool interFont_{};
     Settings* settings_{};
     std::filesystem::path settingsPath_;
     enum class SaveFeedback { None, Saved, Failed };
@@ -46,6 +49,8 @@ class Editor {
     void Changed();
     Environment environment_{Environment::Unknown};
     int editProfile_{};
+    float gameHour_{-1};
+    MotionState motionState_{MotionState::Off};
     std::chrono::steady_clock::time_point lastFrame_{};
     bool CreateView(ID3D11Device*);
     void DestroyView();
@@ -57,11 +62,10 @@ public:
     bool Initialize(HWND,Settings&,const std::filesystem::path&,ID3D11Device*);
     void Shutdown();
     void Pump(unsigned width,unsigned height);
-    void SetEnvironment(Environment value) noexcept {
-        if(!IsOpen() && value!=Environment::Unknown)editProfile_=value==Environment::Interior?1:0;
-        environment_=value;
-    }
+    void SetEnvironment(Environment value,float hour=-1) noexcept;
+    void SetMotionState(MotionState state) noexcept {motionState_=state;}
     void Draw();
+    bool UsesInterFont() const noexcept {return interFont_;}
     bool IsOpen() const noexcept {return open_.load();}
 };
 }

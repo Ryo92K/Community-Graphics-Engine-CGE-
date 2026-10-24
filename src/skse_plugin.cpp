@@ -56,7 +56,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
-        Log("Community Graphics Engine (CGE) 0.2 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.3.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
         // A root injector would also see device creation and may install a second editor.
         // Reject that migration conflict before modifying any executable import.
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -90,6 +90,14 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             cge::graphics::SetEnvironmentProbe(cge::startup::PollEnvironment);
             Log("CGE automatic profiles ready: player cell (403521)");
         }else Log("CGE automatic profiles unavailable: %s",error.c_str());
+        if(cge::startup::InitializeClock(GetModuleHandleW(nullptr),library,error)) {
+            cge::graphics::SetGameHourProbe(cge::startup::PollGameHour);
+            Log("CGE day/night clock ready: Calendar (400447)");
+        }else Log("CGE day/night clock unavailable: %s",error.c_str());
+        if(cge::startup::InitializeMotion(GetModuleHandleW(nullptr),library,error)) {
+            cge::graphics::SetMotionProbe(cge::startup::PollMotion);
+            Log("CGE native motion resources ready: Renderer (411393), ImageSpaceManager (414660), UI (400327)");
+        }else Log("CGE motion resources unavailable: %s",error.c_str());
         loaded=true;
         Log("CGE SKSE loaded; graphics creation hook ready; configuration=%ls",(directory/"CGE.ini").c_str());
         return true;

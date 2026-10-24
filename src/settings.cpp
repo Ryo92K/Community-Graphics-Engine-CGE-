@@ -30,13 +30,25 @@ Settings Settings::Load(const std::filesystem::path& path) {
             if(value=="true" || value=="1")result.separateProfiles=true;
             else if(value=="false" || value=="0")result.separateProfiles=false;
         }
-        if(section=="Interior" || section=="Exterior")profileEntries.push_back({section,key,value});
+        if(section=="Interior" || section=="Exterior" || section=="ExteriorDay" || section=="ExteriorNight")profileEntries.push_back({section,key,value});
+        if(section=="MotionBlur" && key=="Enabled") {
+            if(value=="true" || value=="1")result.motion.enabled=true;
+            else if(value=="false" || value=="0")result.motion.enabled=false;
+        }
+        if(section=="MotionBlur" && key=="Samples") {
+            int count{};auto read=std::from_chars(value.data(),value.data()+value.size(),count);
+            if(read.ec==std::errc{} && read.ptr==value.data()+value.size() && MotionSettings::ValidSamples(count))result.motion.samples=count;
+        }
         if(section=="Input" && key=="ToggleKey") {
             int keyCode{};auto parsed=std::from_chars(value.data(),value.data()+value.size(),keyCode);
             if(parsed.ec==std::errc{} && parsed.ptr==value.data()+value.size() && ValidToggleKey(keyCode))result.toggleKey=keyCode;
         }
         float number{};auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+        if(section=="MotionBlur" && key=="Strength")result.motion.strength=std::clamp(number,0.0f,2.0f);
+        if(section=="MotionBlur" && key=="MaxRadius")result.motion.radius=std::clamp(number,1.0f,64.0f);
+        if(section=="Profiles" && key=="DayHour")result.dayHour=std::clamp(number,0.0f,11.0f);
+        if(section=="Profiles" && key=="NightHour")result.nightHour=std::clamp(number,13.0f,23.0f);
         if(section=="Profiles" && key=="TransitionSeconds")result.transitionSeconds=std::clamp(number,0.0f,5.0f);
         if(section=="Color" && key=="ExposureStops")result.exposure=std::clamp(number,-3.0f,3.0f);
         if(section=="Color" && key=="Contrast")result.contrast=std::clamp(number,0.0f,2.0f);
@@ -47,39 +59,51 @@ Settings Settings::Load(const std::filesystem::path& path) {
     }
     result.interior=result.exterior=static_cast<const ColorSettings&>(result);
     result.profilesConfigured=!profileEntries.empty();
-    for(const auto& entry:profileEntries) {
-        float number{};const auto& value=entry.value;
-        const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
-        if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
-        auto& profile=entry.section=="Interior"?result.interior:result.exterior;
-        if(entry.key=="ExposureStops")profile.exposure=std::clamp(number,-3.0f,3.0f);
-        if(entry.key=="Contrast")profile.contrast=std::clamp(number,0.0f,2.0f);
-        if(entry.key=="Saturation")profile.saturation=std::clamp(number,0.0f,2.0f);
-        if(entry.key=="Sharpen")profile.sharpen=std::clamp(number,0.0f,1.0f);
-        if(entry.key=="Gamma")profile.gamma=std::clamp(number,0.5f,2.5f);
-        if(entry.key=="Temperature")profile.temperature=std::clamp(number,-100.0f,100.0f);
-    }
+    auto apply=[&](const char* name,ColorSettings& profile) {
+        for(const auto& entry:profileEntries) {
+            if(entry.section!=name)continue;
+            float number{};const auto& value=entry.value;
+            const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
+            if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+            if(entry.key=="ExposureStops")profile.exposure=std::clamp(number,-3.0f,3.0f);
+            if(entry.key=="Contrast")profile.contrast=std::clamp(number,0.0f,2.0f);
+            if(entry.key=="Saturation")profile.saturation=std::clamp(number,0.0f,2.0f);
+            if(entry.key=="Sharpen")profile.sharpen=std::clamp(number,0.0f,1.0f);
+            if(entry.key=="Gamma")profile.gamma=std::clamp(number,0.5f,2.5f);
+            if(entry.key=="Temperature")profile.temperature=std::clamp(number,-100.0f,100.0f);
+        }
+    };
+    apply("Interior",result.interior);
+    apply("Exterior",result.exterior); // Legacy 0.2 profile.
+    apply("ExteriorDay",result.exterior);
+    result.exteriorNight=result.exterior;
+    apply("ExteriorNight",result.exteriorNight);
     return result;
 }
 bool Settings::Save(const std::filesystem::path& path) const noexcept {
     try {
         auto finite=[](const ColorSettings& p){return std::isfinite(p.exposure)&&std::isfinite(p.contrast)&&
             std::isfinite(p.saturation)&&std::isfinite(p.sharpen)&&std::isfinite(p.gamma)&&std::isfinite(p.temperature);};
-        if(!finite(*this)||!finite(interior)||!finite(exterior)||!std::isfinite(transitionSeconds)||!ValidToggleKey(toggleKey))return false;
+        if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds)||!ValidToggleKey(toggleKey))return false;
+        if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
         text<<"[CGE]\nEnabled="<<(enabled?"true":"false")<<"\n\n[Color]\nExposureStops="<<std::clamp(exposure,-3.0f,3.0f)
             <<"\nContrast="<<std::clamp(contrast,0.0f,2.0f)<<"\nSaturation="<<std::clamp(saturation,0.0f,2.0f)
             <<"\nGamma="<<std::clamp(gamma,0.5f,2.5f)<<"\nTemperature="<<std::clamp(temperature,-100.0f,100.0f)
             <<"\n\n[Detail]\nSharpen="<<std::clamp(sharpen,0.0f,1.0f)<<"\n\n[Input]\nToggleKey="<<toggleKey<<"\n";
         text<<"\n[Profiles]\nSeparate="<<(separateProfiles?"true":"false")
-            <<"\nTransitionSeconds="<<std::clamp(transitionSeconds,0.0f,5.0f)<<"\n";
+            <<"\nTransitionSeconds="<<std::clamp(transitionSeconds,0.0f,5.0f)
+            <<"\nDayHour="<<std::clamp(dayHour,0.0f,11.0f)<<"\nNightHour="<<std::clamp(nightHour,13.0f,23.0f)<<"\n";
         auto writeProfile=[&](const char* name,const ColorSettings& p) {
             text<<"\n["<<name<<"]\nExposureStops="<<std::clamp(p.exposure,-3.0f,3.0f)
                 <<"\nContrast="<<std::clamp(p.contrast,0.0f,2.0f)<<"\nSaturation="<<std::clamp(p.saturation,0.0f,2.0f)
                 <<"\nSharpen="<<std::clamp(p.sharpen,0.0f,1.0f)<<"\nGamma="<<std::clamp(p.gamma,0.5f,2.5f)
                 <<"\nTemperature="<<std::clamp(p.temperature,-100.0f,100.0f)<<"\n";
         };
-        if(profilesConfigured || separateProfiles){writeProfile("Interior",interior);writeProfile("Exterior",exterior);}
+        if(profilesConfigured || separateProfiles){writeProfile("Interior",interior);writeProfile("ExteriorDay",exterior);writeProfile("ExteriorNight",exteriorNight);}
+        text<<"\n[MotionBlur]\nEnabled="<<(motion.enabled?"true":"false")
+            <<"\nStrength="<<std::clamp(motion.strength,0.0f,2.0f)
+            <<"\nMaxRadius="<<std::clamp(motion.radius,1.0f,64.0f)<<"\nSamples="<<motion.samples<<"\n";
         auto temporary=path.wstring()+L".tmp";
         {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<text.str();file.flush();if(!file)return false;}
         const bool moved=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;

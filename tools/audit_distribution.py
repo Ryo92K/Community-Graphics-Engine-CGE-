@@ -93,3 +93,7 @@ for file in (project/"src").glob("*"):
 print("PASS: only SKSE plugin exports, compiler47, no legacy imports/SDK/preset loader; pinned upstream hashes valid.")
 
 print("Imports:", ", ".join(imports))
+
+assert hashlib.sha256((project/"assets/fonts/Inter.ttf").read_bytes()).hexdigest() == "29160a80ff49ddcab2c97711247e08b1fab27a484a329ce8b813d820dc559031"
+assert "SIL OPEN FONT LICENSE Version 1.1" in (project/"licenses/Inter-OFL.txt").read_text(encoding="utf-8")
+print("PASS: pinned Inter font and OFL notice present.")

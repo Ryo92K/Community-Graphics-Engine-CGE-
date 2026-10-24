@@ -7,15 +7,24 @@ struct ColorSettings {
     bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0;}
     bool operator==(const ColorSettings&) const =default;
 };
+struct MotionSettings {
+    bool enabled{false};
+    float strength{0.5f},radius{24};
+    int samples{12};
+    bool operator==(const MotionSettings&) const =default;
+    static bool ValidSamples(int value) noexcept {return value==8 || value==12 || value==16;}
+};
 struct Settings:ColorSettings {
     bool enabled{true};
     int toggleKey{0x77};
     bool separateProfiles{false};
     float transitionSeconds{1.5f};
-    ColorSettings interior,exterior;
+    ColorSettings interior,exterior,exteriorNight;
+    float dayHour{6},nightHour{20};
     bool profilesConfigured{};
+    MotionSettings motion;
     void SetSeparateProfiles(bool value) noexcept {
-        if(value && !profilesConfigured){interior=exterior=static_cast<const ColorSettings&>(*this);profilesConfigured=true;}
+        if(value && !profilesConfigured){interior=exterior=exteriorNight=static_cast<const ColorSettings&>(*this);profilesConfigured=true;}
         separateProfiles=value;
     }
     const ColorSettings& For(Environment environment) const noexcept {
