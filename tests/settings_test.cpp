@@ -152,5 +152,28 @@ int wmain(int argc,wchar_t** argv) {
     Check(Settings::Load(path).clarity.strength==0.25f,"Non-finite clarity retains default");
     {std::ofstream file(path);file<<"[DepthOfField]\nEnabled=true\nStrength=0.75\n";}
     Check(!Settings::Load(path).clarity.enabled && Settings::Load(path).dof.enabled,"Old settings retain their appearance");
+    {
+    Settings vibrance;vibrance.vibrance={true,0.7f};vibrance.SetSeparateProfiles(true);
+    vibrance.interior.vibrance={false,0.2f};vibrance.exteriorNight.vibrance={true,0.9f};
+    Check(vibrance.Save(path),"Save vibrance");
+    const auto vibranceReload=Settings::Load(path);
+    Check(vibranceReload==vibrance && vibranceReload.interior==vibrance.interior &&
+        vibranceReload.exterior==vibrance.exterior && vibranceReload.exteriorNight==vibrance.exteriorNight,"Vibrance round trip for all profiles");
+    {std::ofstream file(path);file<<"[ExteriorNight]\nVibranceStrength=0.8\n[ExteriorDay]\nVibranceStrength=0.4\n[Vibrance]\nEnabled=true\nStrength=0.3\n";}
+    const auto inheritedVibrance=Settings::Load(path);
+    Check(inheritedVibrance.interior.vibrance.strength==0.3f && inheritedVibrance.exterior.vibrance.enabled &&
+        inheritedVibrance.exterior.vibrance.strength==0.4f && inheritedVibrance.exteriorNight.vibrance.strength==0.8f,"Vibrance inheritance ignores section order");
+    {std::ofstream file(path);file<<"[Vibrance]\nEnabled=true\nStrength=99\n[Interior]\nVibranceStrength=-1\n[ExteriorNight]\nVibranceStrength=nan\n";}
+    const auto boundedVibrance=Settings::Load(path);
+    Check(boundedVibrance.vibrance.strength==1 && boundedVibrance.interior.vibrance.strength==0 &&
+        boundedVibrance.exteriorNight.vibrance.strength==1,"Vibrance bounds and finite values");
+    vibrance.interior.vibrance.strength=std::numeric_limits<float>::quiet_NaN();
+    const auto beforeInvalid=Settings::Load(path);
+    Check(!vibrance.Save(path) && Settings::Load(path).interior==beforeInvalid.interior,"Invalid vibrance cannot replace existing settings");
+    {std::ofstream file(path);file<<"[Vibrance]\nStrength=nan\n";}
+    Check(Settings::Load(path).vibrance.strength==0.25f,"Non-finite vibrance retains default");
+    {std::ofstream file(path);file<<"[DepthOfField]\nEnabled=true\nStrength=0.75\n";}
+    Check(!Settings::Load(path).vibrance.enabled && Settings::Load(path).dof.enabled,"Old settings retain their appearance");
+    }
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

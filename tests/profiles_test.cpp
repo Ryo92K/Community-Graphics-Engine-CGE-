@@ -86,5 +86,16 @@ int main() {
     Check(detail.Update(clarity,Environment::Interior,1,12).Neutral(),"Clarity fade reaches neutral");
     clarity.transitionSeconds=0;detail.Reset();
     Check(Near(detail.Update(clarity,Environment::Exterior,0,20).clarity.strength,0.8f),"Clarity blends at dusk");
+    {
+    Settings vibrance;vibrance.vibrance={true,0.6f};vibrance.SetSeparateProfiles(true);vibrance.transitionSeconds=2;
+    vibrance.interior.vibrance={false,0.5f};vibrance.exteriorNight.vibrance={true,1};
+    ProfileTransition detail;
+    Check(Near(detail.Update(vibrance,Environment::Exterior,0,12).vibrance.strength,0.6f),"Vibrance selects day profile");
+    const auto halfVibrance=detail.Update(vibrance,Environment::Interior,1,12).vibrance;
+    Check(halfVibrance.enabled && Near(halfVibrance.strength,0.3f),"Vibrance fades towards disabled interior");
+    Check(detail.Update(vibrance,Environment::Interior,1,12).Neutral(),"Vibrance fade reaches neutral");
+    vibrance.transitionSeconds=0;detail.Reset();
+    Check(Near(detail.Update(vibrance,Environment::Exterior,0,20).vibrance.strength,0.8f),"Vibrance blends at dusk");
+    }
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

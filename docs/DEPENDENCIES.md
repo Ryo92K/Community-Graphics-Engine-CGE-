@@ -16,7 +16,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers nine pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers ten pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -155,8 +155,8 @@ Clarity defaults to disabled with Strength 0.25. Shared values use [Clarity],
 Enabled and Strength; profiles use ClarityEnabled and ClarityStrength. Strength
 is restricted to 0 through 1. Missing keys retain the prior appearance. Profile
 transitions fade disabled endpoints through zero strength. Reset Color preserves
-Clarity, and Reset Clarity changes only the selected profile. Built-in presets
-retain their original appearance with Clarity disabled.
+Clarity, and Reset Clarity changes only the selected profile. The 0.6.1 built-in presets use restrained Clarity strengths; Soft Focus keeps
+Clarity disabled.
 
 GPU tests cover local contrast, strength, exact bypasses, exposure composition,
 alpha, bounded output, neutral colors, black/white edges, render-resolution
@@ -189,3 +189,41 @@ the optional SKSE interface tail is not accessed.
 The project's distribution contains no Address Library tables or reference-mod
 code. Installed library checks run against read-only local files and are not
 required for the portable automated test suite.
+
+
+## Vibrance (0.6.1)
+
+Vibrance expands chroma around luminance after the global saturation control and
+before gamma in the existing SDR color pass. The boost decreases with the square
+of the remaining saturation headroom. A shared chroma scale is limited by the
+available RGB gamut, retaining chroma direction and luminance before gamma.
+Neutral grays, black, white and fully saturated colors are unchanged.
+This is a per-pixel color adjustment without skin, face or material detection.
+
+The effect adds no texture samples, render targets, native hooks or dependencies.
+Disabled or zero Strength bypasses it. Defaults are disabled and Strength 0.25.
+The valid range is 0 through 1. Shared INI values use [Vibrance], Enabled and
+Strength; profile sections use VibranceEnabled and VibranceStrength.
+Save, profile transitions, resets and preset replacement include the effect.
+Reset Color preserves it; Reset Vibrance affects only the selected profile.
+Existing configurations keep Vibrance disabled. The 0.6.1 built-in presets
+use style-specific Clarity and Vibrance values, with reduced sharpness.
+In-game appearance remains to be checked.
+
+Preset detail and color balance were retuned for 0.6.1. Natural uses light
+enhancement, Nordic adds texture definition with a restrained color boost,
+Warm Fantasy has the strongest Vibrance, Cinematic keeps it subtle, and
+Soft Focus disables Clarity and uses minimal sharpness. Night strengths are
+lower than day strengths. Existing saved settings are not changed until the
+user selects a preset; applying still requires Save for persistence.
+
+
+Effect parameter controls use nested disabled scopes after each enable checkbox.
+Disabled effects keep their slider, numeric input, reset and motion quality
+controls unavailable. The master switch disables parameter editing across
+effects, and automatic-profile timing controls are unavailable when automatic
+profiles are off. Effect switches, profile selection and Save remain outside
+the dependent parameter scope. Inactive profile scopes remain authoritative
+when nested inside enabled effects. Re-enabling restores the stored values.
+Framework tests cover blocked edits and resets, reactivation, master state,
+inactive profiles and balanced disabled scopes.

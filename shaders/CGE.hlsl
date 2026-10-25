@@ -12,7 +12,8 @@ cbuffer CgeColorControls : register(b0) {
     float CgeMotionRadius;
     uint CgeMotionSamples;
     float CgeClarity;
-    float2 CgePadding;
+    float CgeVibrance;
+    float CgePadding;
 };
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
@@ -42,6 +43,20 @@ float3 ApplyClarity(float3 color,int2 pixel,int2 size) {
     float available=adjustment>=0?1.0-center:center;
     return color+direction*(adjustment/max(available,0.0001));
 }
+float3 ApplyVibrance(float3 color) {
+    float high=max(color.r,max(color.g,color.b));
+    float low=min(color.r,min(color.g,color.b));
+    if(high-low<0.000001)return color;
+    float luminance=dot(color,float3(0.2126,0.7152,0.0722));
+    float3 chroma=color-luminance;
+    float muted=1.0-(high-low)/max(high,0.000001);
+    float scale=1.0+CgeVibrance*muted*muted;
+    [unroll]for(int channel=0;channel<3;++channel) {
+        if(chroma[channel]>0.000001)scale=min(scale,(1.0-luminance)/chroma[channel]);
+        else if(chroma[channel]<-0.000001)scale=min(scale,-luminance/chroma[channel]);
+    }
+    return luminance+chroma*max(1.0,scale);
+}
 float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     uint width,height;CgeInput.GetDimensions(width,height);
     int2 pixel=int2(position.xy),size=int2(width,height);
@@ -58,6 +73,7 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     color=(color-0.5)*CgeContrast+0.5;
     float luminance=dot(color,float3(0.2126,0.7152,0.0722));
     color=lerp(luminance.xxx,color,CgeSaturation);
+    if(CgeVibrance>0)color=ApplyVibrance(saturate(color));
     color=pow(saturate(color),1.0/CgeGamma);
     return float4(color,source.a);
 }

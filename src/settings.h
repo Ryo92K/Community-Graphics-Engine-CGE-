@@ -22,13 +22,19 @@ struct ClaritySettings {
     float strength{0.25f};
     bool operator==(const ClaritySettings&) const =default;
 };
+struct VibranceSettings {
+    bool enabled{false};
+    float strength{0.25f};
+    bool operator==(const VibranceSettings&) const =default;
+};
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
     BloomSettings bloom;
     FogSettings fog;
     DofSettings dof;
     ClaritySettings clarity;
-    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0);}
+    VibranceSettings vibrance;
+    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0);}
     bool operator==(const ColorSettings&) const =default;
 };
 struct MotionSettings {

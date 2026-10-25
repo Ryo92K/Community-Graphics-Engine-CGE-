@@ -107,11 +107,14 @@ void Render(unsigned page) noexcept {
         }else if(page==1) {
             bool automatic=settings.separateProfiles;
             if(api.checkbox("Automatic profiles",&automatic)){settings.SetSeparateProfiles(automatic);Changed();}
+            api.beginDisabled(!settings.enabled || !settings.separateProfiles);
             Control("Transition (sec)",settings.transitionSeconds,0,5,1.5f);
             Control("Dawn (hour)",settings.dayHour,0,11,6);
             Control("Dusk (hour)",settings.nightHour,13,23,20);
+            api.endDisabled();
         }else if(page==4) {
             if(api.checkbox("Motion blur enabled",&settings.motion.enabled))Changed();
+            api.beginDisabled(!settings.enabled || !settings.motion.enabled);
             Control("Intensity",settings.motion.strength,0,2,0.5f);
             Control("Blur Radius (px)",settings.motion.radius,1,64,24);
             constexpr const char* choices[]={"8 samples","12 samples","16 samples"};
@@ -122,6 +125,7 @@ void Render(unsigned page) noexcept {
             if(Button("Natural")){settings.motion={true,0.5f,24,12};Changed();}
             api.sameLine(0,-1);
             if(Button("Strong")){settings.motion={true,1.5f,48,16};Changed();}
+            api.endDisabled();
             Text(MotionLabel(view.motion));
         }else {
             constexpr const char* choices[]={"Shared","Interior","Exterior Day","Exterior Night"};
@@ -138,6 +142,7 @@ void Render(unsigned page) noexcept {
             if(disabled)Text("Enable Automatic profiles on the Profiles page to edit this profile.");
             api.beginDisabled(disabled);
             if(page==2) {
+                api.beginDisabled(!settings.enabled);
                 Control("Exposure",profile->exposure,-3,3,0);
                 Control("Contrast",profile->contrast,0,2,1);
                 Control("Saturation",profile->saturation,0,2,1);
@@ -145,29 +150,44 @@ void Render(unsigned page) noexcept {
                 Control("Gamma",profile->gamma,0.5f,2.5f,1);
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
-                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;
-                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;Changed();
+                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;const auto vibrance=profile->vibrance;
+                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;Changed();
                 }
+                api.endDisabled();
+            }else if(page==9) {
+                if(api.checkbox("Vibrance enabled",&profile->vibrance.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->vibrance.enabled);
+                Control("Strength",profile->vibrance.strength,0,1,0.25f);
+                if(Button("Reset Vibrance")){profile->vibrance=VibranceSettings{};Changed();}
+                api.endDisabled();
             }else if(page==8) {
                 if(api.checkbox("Clarity enabled",&profile->clarity.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->clarity.enabled);
                 Control("Strength",profile->clarity.strength,0,1,0.25f);
                 if(Button("Reset Clarity")){profile->clarity=ClaritySettings{};Changed();}
+                api.endDisabled();
             }else if(page==6) {
                 if(api.checkbox("Depth of field enabled",&profile->dof.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->dof.enabled);
                 Control("Focus Distance (units)",profile->dof.focusDistance,1,50000,2000);
                 Control("Blur Strength",profile->dof.strength,0,1,0.5f);
                 if(Button("Reset Depth of Field")){profile->dof=DofSettings{};Changed();}
+                api.endDisabled();
             }else if(page==5) {
                 if(api.checkbox("Fog enabled",&profile->fog.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->fog.enabled);
                 Control("Density",profile->fog.density,0,1,0.35f);
                 Control("Start Distance (units)",profile->fog.startDistance,0,50000,2000);
                 if(Button("Reset Fog")){profile->fog=FogSettings{};Changed();}
+                api.endDisabled();
             }else {
                 if(api.checkbox("Bloom enabled",&profile->bloom.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->bloom.enabled);
                 Control("Intensity",profile->bloom.intensity,0,2,0.15f);
                 Control("Threshold",profile->bloom.threshold,0,1,1);
                 Control("Radius",profile->bloom.radius,1,64,32);
                 if(Button("Reset Bloom")){profile->bloom=BloomSettings{};Changed();}
+                api.endDisabled();
             }
             api.endDisabled();
             if(page==3 && !view.bloom.empty())Text(view.bloom.c_str());
@@ -186,6 +206,7 @@ void __stdcall Fog(){Render(5);}
 void __stdcall Dof(){Render(6);}
 void __stdcall Presets(){Render(7);}
 void __stdcall Clarity(){Render(8);}
+void __stdcall Vibrance(){Render(9);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -221,11 +242,11 @@ bool Register(std::string& status) {
         "Community Graphics Engine/General","Community Graphics Engine/Presets","Community Graphics Engine/Profiles",
         "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
         "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
-        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity"};
-    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity};
-    for(unsigned i=0;i<9;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Vibrance"};
+    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance};
+    for(unsigned i=0;i<10;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 9 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 10 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

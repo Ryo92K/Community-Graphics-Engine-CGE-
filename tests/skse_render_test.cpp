@@ -248,7 +248,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?9u:0u),"Validate API before registering exactly nine pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?10u:0u),"Validate API before registering exactly ten pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -334,8 +334,7 @@ int wmain(int argc,wchar_t** argv) {
     present();pixel(sceneReady?102:204);
     if(frameworkReady) {
         edit(shared,3,"Exposure",0);present();pixel(204);
-        edit(bloom,2,"Threshold",0.5f);
-        edit(bloom,1,"Bloom enabled",1);present();
+        edit(bloom,1,"Bloom enabled",1);edit(bloom,2,"Threshold",0.5f);present();
         Check(hdrConflict || !sceneReady || halo()>0.05f,"Framework controls operate production HDR bloom");
         edit(bloom,2,"Threshold",99);edit(shared,5,"Save",0);
         Check(cge::Settings::Load(config).bloom.threshold==1,"Framework bloom slider clamps to 0..1");
@@ -347,7 +346,7 @@ int wmain(int argc,wchar_t** argv) {
         const char* profiles="Community Graphics Engine/Profiles";
         edit(profiles,1,"Automatic profiles",1);
         edit(shared,4,"##Profile",1);edit(shared,3,"Exposure",0.5f);
-        edit(bloom,4,"##Profile",3);edit(bloom,3,"Intensity",0.9f);
+        edit(bloom,4,"##Profile",3);edit(bloom,1,"Bloom enabled",1);edit(bloom,3,"Intensity",0.9f);
         edit(profiles,3,"Dawn (hour)",7);edit(profiles,3,"Dusk (hour)",21);edit(general,5,"Save",0);
         auto saved=cge::Settings::Load(config);
         Check(saved.interior.exposure==0.5f && saved.exteriorNight.bloom.intensity==0.9f &&
@@ -385,7 +384,7 @@ int wmain(int argc,wchar_t** argv) {
         }
         temporalFixture[0x18]=1;
         edit(profiles,1,"Automatic profiles",1);
-        edit(fog,4,"##Profile",3);edit(fog,3,"Density",0.8f);edit(fog,3,"Start Distance (units)",500);
+        edit(fog,4,"##Profile",3);edit(fog,1,"Fog enabled",1);edit(fog,3,"Density",0.8f);edit(fog,3,"Start Distance (units)",500);
         edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
         Check(cge::Settings::Load(config).exteriorNight.fog.density==0.8f,"Reset Color preserves the selected profile's fog");
         edit(fog,5,"Reset Fog",0);edit(fog,5,"Save",0);
@@ -454,6 +453,29 @@ int wmain(int argc,wchar_t** argv) {
             cge::Settings::Load(config).clarity.strength==0.65f,"Clarity reset affects only the selected profile");
         edit(profiles,1,"Automatic profiles",0);edit(clarity,4,"##Profile",0);
         edit(clarity,5,"Reset Clarity",0);edit(clarity,5,"Save",0);
+        const char* vibrance="Community Graphics Engine/Effects/Vibrance";
+        edit(vibrance,4,"##Profile",0);edit(vibrance,1,"Vibrance enabled",1);
+        edit(vibrance,3,"Strength",99);edit(vibrance,5,"Save",0);
+        auto savedVibrance=cge::Settings::Load(config);
+        Check(savedVibrance.vibrance.enabled && savedVibrance.vibrance.strength==1,"Vibrance numeric input clamps and persists");
+        present();pixel(sceneReady?209:204);
+        edit(vibrance,1,"Vibrance enabled",0);present();pixel(204);
+        edit(vibrance,1,"Vibrance enabled",1);
+        edit(vibrance,3,"Strength",0.65f);edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        savedVibrance=cge::Settings::Load(config);
+        Check(savedVibrance.vibrance.enabled && savedVibrance.vibrance.strength==0.65f,"Reset Color preserves Vibrance");
+        edit(profiles,1,"Automatic profiles",1);
+        edit(vibrance,4,"##Profile",3);edit(vibrance,1,"Vibrance enabled",1);
+        edit(vibrance,3,"Strength",0.8f);edit(vibrance,5,"Save",0);
+        Check(cge::Settings::Load(config).exteriorNight.vibrance.strength==0.8f,"Vibrance saves selected profile");
+        edit(clarity,1,"Clarity enabled",1);edit(clarity,3,"Strength",0.45f);
+        edit(vibrance,5,"Reset Vibrance",0);edit(vibrance,5,"Save",0);
+        savedVibrance=cge::Settings::Load(config);
+        Check(!savedVibrance.exteriorNight.vibrance.enabled && savedVibrance.vibrance.strength==0.65f &&
+            savedVibrance.exteriorNight.clarity.enabled && savedVibrance.exteriorNight.clarity.strength==0.45f,"Vibrance reset preserves other profiles and effects");
+        edit(clarity,5,"Reset Clarity",0);
+        edit(profiles,1,"Automatic profiles",0);edit(vibrance,4,"##Profile",0);
+        edit(vibrance,5,"Reset Vibrance",0);edit(vibrance,5,"Save",0);
         const char* motion="Community Graphics Engine/Effects/Motion Blur";
         edit(motion,1,"Motion blur enabled",1);edit(motion,4,"Quality",2);edit(motion,5,"Save",0);
         Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");
@@ -474,6 +496,7 @@ int wmain(int argc,wchar_t** argv) {
             &desc,&chain,&device,nullptr,&context)),"Reattach renderer");
         nativeResourcesValid=false;buffers();present();pixel(sceneReady?102:204);
         const char* presetPage="Community Graphics Engine/Presets";
+        edit(vibrance,4,"##Profile",0);edit(vibrance,1,"Vibrance enabled",1);edit(vibrance,3,"Strength",0.7f);
         edit(general,5,"Save",0);
         const auto previous=cge::Settings::Load(config);
         auto same=[](const cge::Settings& a,const cge::Settings& b) {
@@ -499,6 +522,63 @@ int wmain(int argc,wchar_t** argv) {
         Check(!cge::presets::Apply(choices.size(),invalidPreset) && same(previous,invalidPreset),"Invalid preset index leaves settings unchanged");
         edit(general,5,"Reset All",0);edit(general,5,"Save",0);
         Check(cge::Settings::Load(config).Neutral() && !cge::Settings::Load(config).bloom.enabled,"Reset All saves neutral effects");
+        const auto controlDisabled=Proc<int(*)(int,const char*)>(framework,"TestControlDisabled");
+        struct DisabledCase {
+            const char *page,*toggle,*control,*reset;
+            float(*value)(const cge::Settings&);
+        };
+        const DisabledCase cases[]={
+            {bloom,"Bloom enabled","Intensity","Reset Bloom",[](const cge::Settings& s){return s.bloom.intensity;}},
+            {fog,"Fog enabled","Density","Reset Fog",[](const cge::Settings& s){return s.fog.density;}},
+            {dof,"Depth of field enabled","Blur Strength","Reset Depth of Field",[](const cge::Settings& s){return s.dof.strength;}},
+            {clarity,"Clarity enabled","Strength","Reset Clarity",[](const cge::Settings& s){return s.clarity.strength;}},
+            {vibrance,"Vibrance enabled","Strength","Reset Vibrance",[](const cge::Settings& s){return s.vibrance.strength;}},
+            {motion,"Motion blur enabled","Intensity","",[](const cge::Settings& s){return s.motion.strength;}}
+        };
+        for(const auto& item:cases) {
+            Check(render(item.page),"Render inactive effect");
+            Check(controlDisabled(1,item.toggle)==0 && controlDisabled(2,item.control)==1 &&
+                controlDisabled(3,item.control)==1 && controlDisabled(5,"Save")==0,"Inactive effect grays controls while toggle and Save stay accessible");
+            edit(item.page,1,item.toggle,1);
+            Check(controlDisabled(2,item.control)==0 && controlDisabled(3,item.control)==0,"Enabling effect unlocks controls immediately");
+            edit(item.page,3,item.control,0.6f);edit(item.page,5,"Save",0);
+            Check(item.value(cge::Settings::Load(config))==0.6f,"Enabled field accepts input");
+            edit(general,1,"Effects enabled",0);Check(render(item.page),"Render with master disabled");
+            Check(controlDisabled(2,item.control)==1 && controlDisabled(3,item.control)==1,"Master switch grays effect settings");
+            edit(item.page,3,item.control,0.9f);edit(item.page,5,"Save",0);
+            Check(item.value(cge::Settings::Load(config))==0.6f,"Master-disabled controls retain values");
+            edit(general,1,"Effects enabled",1);edit(item.page,1,item.toggle,0);
+            edit(item.page,2,item.control,0.8f);edit(item.page,3,item.control,0.9f);edit(item.page,5,"Reset",0);
+            if(item.reset[0])edit(item.page,5,item.reset,0);
+            edit(item.page,5,"Save",0);
+            Check(item.value(cge::Settings::Load(config))==0.6f,"Inactive sliders, numeric fields and resets cannot edit settings");
+            edit(item.page,1,item.toggle,1);
+            Check(controlDisabled(2,item.control)==0,"Reactivation restores editable slider");
+            edit(item.page,3,item.control,0.4f);edit(item.page,5,"Save",0);
+            Check(item.value(cge::Settings::Load(config))==0.4f,"Reactivated control accepts edits");
+            edit(item.page,1,item.toggle,0);
+        }
+        Check(render(motion) && controlDisabled(4,"Quality")==1 && controlDisabled(5,"Natural")==1 &&
+            controlDisabled(5,"Strong")==1,"Motion quality and shortcuts disabled with effect");
+        edit(motion,4,"Quality",0);edit(motion,5,"Strong",0);edit(motion,5,"Save",0);
+        Check(!cge::Settings::Load(config).motion.enabled && cge::Settings::Load(config).motion.samples==12,"Inactive motion shortcuts cannot activate or change the effect");
+        edit(profiles,3,"Dawn (hour)",7);edit(profiles,5,"Save",0);
+        Check(cge::Settings::Load(config).dayHour==6 && controlDisabled(2,"Dawn (hour)")==1,"Automatic profile controls disabled when profiles are off");
+        edit(profiles,1,"Automatic profiles",1);
+        edit(clarity,4,"##Profile",3);edit(clarity,1,"Clarity enabled",1);edit(clarity,3,"Strength",0.7f);
+        edit(clarity,5,"Save",0);edit(profiles,1,"Automatic profiles",0);
+        Check(render(clarity) && controlDisabled(1,"Clarity enabled")==1 && controlDisabled(3,"Strength")==1,
+            "Inactive profile keeps nested enabled-effect controls disabled");
+        edit(clarity,3,"Strength",0.1f);edit(clarity,1,"Clarity enabled",0);edit(clarity,5,"Reset Clarity",0);edit(clarity,5,"Save",0);
+        Check(cge::Settings::Load(config).exteriorNight.clarity.enabled &&
+            cge::Settings::Load(config).exteriorNight.clarity.strength==0.7f,"Nested disabled scopes preserve inactive profile settings");
+        edit(profiles,1,"Automatic profiles",1);Check(render(clarity) && controlDisabled(3,"Strength")==0,"Active profile restores nested controls");
+        edit(general,1,"Effects enabled",0);edit(shared,4,"##Profile",0);
+        Check(controlDisabled(3,"Exposure")==1,"Master switch grays color controls");
+        edit(shared,3,"Exposure",1);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).exposure==0,"Disabled color controls preserve values");
+        edit(general,1,"Effects enabled",1);edit(general,5,"Reset All",0);edit(general,5,"Save",0);
+
     }
     context->ClearState();output.Reset();buffer.Reset();readback.Reset();
     Check(SUCCEEDED(chain->ResizeBuffers(1,80,48,DXGI_FORMAT_UNKNOWN,0)),"No retained game backbuffer during resize");

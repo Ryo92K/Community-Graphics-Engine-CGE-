@@ -10,9 +10,13 @@ namespace {
 std::vector<std::pair<std::string,Page>> pages;
 float version=3.8f;
 bool blocking{},disabled{};
+std::vector<bool> disabledStack;
+struct ObservedControl {int type;std::string label;bool disabled;};
+std::vector<ObservedControl> controls;
 std::string id,actionLabel;
 int action{};float value{};
 bool Match(int type,const char* label) {
+    controls.push_back({type,label,disabled});
     if(!disabled && action==type && actionLabel==label){action=0;return true;}return false;
 }
 }
@@ -39,13 +43,20 @@ __declspec(dllexport) void igSameLine(float,float){}
 __declspec(dllexport) void igSetNextItemWidth(float){}
 __declspec(dllexport) void igPushID_Str(const char* label){id=label;}
 __declspec(dllexport) void igPopID(){id.clear();}
-__declspec(dllexport) void igBeginDisabled(bool p){disabled=p;}
-__declspec(dllexport) void igEndDisabled(){disabled=false;}
+__declspec(dllexport) void igBeginDisabled(bool p){disabledStack.push_back(disabled);disabled=disabled || p;}
+__declspec(dllexport) void igEndDisabled(){if(disabledStack.empty())return;disabled=disabledStack.back();disabledStack.pop_back();}
 __declspec(dllexport) void TestSetVersion(float p){version=p;}
 __declspec(dllexport) void TestSetBlocking(bool p){blocking=p;}
 __declspec(dllexport) void TestAction(int type,const char* label,float p){action=type;actionLabel=label;value=p;}
 __declspec(dllexport) unsigned TestPageCount(){return static_cast<unsigned>(pages.size());}
+__declspec(dllexport) int TestControlDisabled(int type,const char* label) {
+    for(auto it=controls.rbegin();it!=controls.rend();++it)if(it->type==type && it->label==label)return it->disabled?1:0;
+    return -1;
+}
 __declspec(dllexport) bool TestRender(const char* path) {
-    for(auto& page:pages)if(page.first==path){page.second();return true;}return false;
+    for(auto& page:pages)if(page.first==path){
+        if(disabled || !disabledStack.empty())return false;
+        controls.clear();page.second();return !disabled && disabledStack.empty();
+    }return false;
 }
 }
