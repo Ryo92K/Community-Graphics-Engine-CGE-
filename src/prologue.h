@@ -30,13 +30,13 @@ inline std::size_t PrologueInstruction(std::span<const unsigned char> code) noex
     const std::size_t disp=mod==1?1:mod==2?4:0;
     return at+disp<=code.size()?at+disp:0;
 }
-inline std::size_t PrologueLength(std::span<const unsigned char> code) noexcept {
+inline std::size_t PrologueLength(std::span<const unsigned char> code,std::size_t minimum=14) noexcept {
     std::size_t length=0;
-    while(length<14 && length<code.size()) {
+    while(length<minimum && length<code.size()) {
         const auto bytes=PrologueInstruction(code.subspan(length));
         if(!bytes)return 0;
         length+=bytes;
     }
-    return length>=14?length:0;
+    return length>=minimum?length:0;
 }
 }

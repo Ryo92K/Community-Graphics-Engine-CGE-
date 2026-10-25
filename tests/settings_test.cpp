@@ -13,9 +13,11 @@ int wmain(int argc,wchar_t** argv) {
     {std::ofstream f(path);f<<"[Color]\nExposureStops=nan\nContrast=50\nSaturation=-3\nGamma=0\nTemperature=1000\n[Input]\nToggleKey=117\n[Detail]\nSharpen=bad\n[CGE]\nEnabled=false\n";}
     auto s=Settings::Load(path);
     Check(!s.enabled && s.exposure==0 && s.contrast==2 && s.saturation==0 && s.sharpen==0 && s.gamma==0.5f && s.temperature==100,"Finite values, bounds and malformed fallback");
+    s.showFps=true;
     s.exposure=-0.75f;s.contrast=1.25f;s.saturation=1.5f;s.sharpen=0.25f;s.gamma=1.75f;s.temperature=-35;
     Check(s.Save(path),"Atomic save to Unicode path");
     auto loaded=Settings::Load(path);
+    Check(loaded.showFps,"FPS setting persists");
     Check(!loaded.enabled && loaded.exposure==s.exposure && loaded.contrast==s.contrast &&
         loaded.saturation==s.saturation && loaded.sharpen==s.sharpen && loaded.gamma==s.gamma && loaded.temperature==s.temperature,"Own format roundtrip");
     s.exposure=std::numeric_limits<float>::infinity();Check(!s.Save(path),"Reject invalid runtime values");
@@ -74,7 +76,7 @@ int wmain(int argc,wchar_t** argv) {
     Check(motionReload.motion.enabled && motionReload.motion.strength==1.25f && motionReload.motion.radius==37 && motionReload.motion.samples==16,"Motion blur settings persist across reloads");
     {std::ofstream file(path);file<<"[MotionBlur]\nEnabled=true\nStrength=99\nMaxRadius=-5\nSamples=17\n";}
     auto motionBounds=Settings::Load(path);
-    Check(motionBounds.motion.enabled && motionBounds.motion.strength==4 && motionBounds.motion.radius==1 && motionBounds.motion.samples==12,"Motion bounds and invalid quality are handled");
+    Check(motionBounds.motion.enabled && motionBounds.motion.strength==10 && motionBounds.motion.radius==1 && motionBounds.motion.samples==12,"Motion bounds and invalid quality are handled");
     motion.motion.strength=std::numeric_limits<float>::quiet_NaN();
     Check(!motion.Save(path),"Invalid motion values cannot overwrite settings");
     {std::ofstream file(path);file<<"[Color]\nGamma=1.2\n";}
@@ -300,6 +302,12 @@ int wmain(int argc,wchar_t** argv) {
         Check(bounded.ssao.radius==250 && bounded.ssao.bias==0.01f && bounded.ssao.quality==2 && bounded.interior.ssao.radius==85 && bounded.interior.ssao.quality==0 && bounded.interior.ssao.enabled,"SSAO bounds and section-independent inheritance");
         {std::ofstream f(path);f<<"[SSAO]\nQuality=1.5\nStrength=nan\n";}
         Check(Settings::Load(path).ssao==cge::SsaoSettings{},"Invalid SSAO values retain safe disabled defaults");
+    }
+    {
+        Settings global;global.dofAllowed=false;global.dof.enabled=true;global.SetSeparateProfiles(true);
+        global.motion.strength=10;Check(global.Save(path),"Save global DOF switch and intensity ten");
+        auto restored=Settings::Load(path);
+        Check(!restored.dofAllowed && restored.dof.enabled && restored.interior.dof.enabled && restored.motion.strength==10,"Global DOF off and intensity ten persist without discarding profile settings");
     }
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

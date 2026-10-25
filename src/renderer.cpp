@@ -166,7 +166,16 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     if(!context_ || !isolated_)return "renderer unavailable";
     if(desc.SampleDesc.Count!=1 || desc.ArraySize!=1 || desc.MipLevels!=1 ||
         (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM))
-        return "unsupported output; SDR UNORM single-sample required";
+    {
+        const char* format=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM?"R10G10B10A2_UNORM":
+            desc.Format==DXGI_FORMAT_R16G16B16A16_FLOAT?"R16G16B16A16_FLOAT":
+            desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB?"R8G8B8A8_UNORM_SRGB":
+            desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB?"B8G8R8A8_UNORM_SRGB":"other";
+        char detail[320]{};
+        std::snprintf(detail,sizeof(detail),"unsupported output; SDR UNORM single-sample required; format=%u (%s), size=%ux%u, samples=%u, sampleQuality=%u, mips=%u, array=%u",
+            static_cast<unsigned>(desc.Format),format,desc.Width,desc.Height,desc.SampleDesc.Count,desc.SampleDesc.Quality,desc.MipLevels,desc.ArraySize);
+        return detail;
+    }
     auto* target=output_.Get(device_.Get(),buffer,desc.Format);
     if(!target)return "output view unavailable";
     if(process && (!source_ || width_!=desc.Width || height_!=desc.Height || format_!=desc.Format)) {

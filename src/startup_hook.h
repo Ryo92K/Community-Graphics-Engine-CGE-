@@ -19,5 +19,6 @@ MotionInputs PollMotion() noexcept;
 bool InitializeDepth(HMODULE,const std::filesystem::path&,std::string& error);
 DepthInputs PollDepth() noexcept;
 bool HookTonemap(HMODULE,const std::filesystem::path&,void(*before)(ID3D11ShaderResourceView*) noexcept,std::string& error);
+bool HookOpaque(HMODULE,const std::filesystem::path&,void(*begin)() noexcept,void(*end)() noexcept,std::string& error);
 void Shutdown() noexcept;
 }

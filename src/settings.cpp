@@ -29,6 +29,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
             if(value=="true" || value=="1")result.enabled=true;
             else if(value=="false" || value=="0")result.enabled=false;
         }
+        if(section=="General" && key=="ShowFPS") {
+            if(value=="true" || value=="1")result.showFps=true;
+            else if(value=="false" || value=="0")result.showFps=false;
+        }
         if(section=="Profiles" && key=="Separate") {
             if(value=="true" || value=="1")result.separateProfiles=true;
             else if(value=="false" || value=="0")result.separateProfiles=false;
@@ -48,6 +52,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
         if(section=="Clarity" && key=="Enabled") {
             if(value=="true" || value=="1")result.clarity.enabled=true;
             else if(value=="false" || value=="0")result.clarity.enabled=false;
+        }
+        if(section=="DepthOfField" && key=="MasterEnabled") {
+            if(value=="true" || value=="1")result.dofAllowed=true;
+            else if(value=="false" || value=="0")result.dofAllowed=false;
         }
         if(section=="DepthOfField" && key=="Autofocus") {
             if(value=="true" || value=="1")result.dof.autofocus=true;
@@ -93,7 +101,7 @@ Settings Settings::Load(const std::filesystem::path& path) {
         if(section=="Bloom" && key=="Intensity")result.bloom.intensity=std::clamp(number,0.0f,2.0f);
         if(section=="Bloom" && key=="Threshold")result.bloom.threshold=std::clamp(number,0.0f,1.0f);
         if(section=="Bloom" && key=="Radius")result.bloom.radius=std::clamp(number,1.0f,64.0f);
-        if(section=="MotionBlur" && key=="Strength")result.motion.strength=std::clamp(number,0.0f,4.0f);
+        if(section=="MotionBlur" && key=="Strength")result.motion.strength=std::clamp(number,0.0f,10.0f);
         if(section=="MotionBlur" && key=="MaxRadius")result.motion.radius=std::clamp(number,1.0f,64.0f);
         if(section=="Profiles" && key=="DayHour")result.dayHour=std::clamp(number,0.0f,11.0f);
         if(section=="Profiles" && key=="NightHour")result.nightHour=std::clamp(number,13.0f,23.0f);
@@ -185,6 +193,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
         if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds))return false;
         if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
+        text<<"[General]\nShowFPS="<<(showFps?"true":"false")<<"\n\n";
         text<<"[CGE]\nEnabled="<<(enabled?"true":"false")<<"\n\n[Color]\nExposureStops="<<std::clamp(exposure,-3.0f,3.0f)
             <<"\nContrast="<<std::clamp(contrast,0.0f,2.0f)<<"\nSaturation="<<std::clamp(saturation,0.0f,2.0f)
             <<"\nGamma="<<std::clamp(gamma,0.5f,2.5f)<<"\nTemperature="<<std::clamp(temperature,-100.0f,100.0f)
@@ -229,7 +238,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
         text<<"\n[Fog]\nEnabled="<<(fog.enabled?"true":"false")
             <<"\nDensity="<<std::clamp(fog.density,0.0f,1.0f)
             <<"\nStartDistance="<<std::clamp(fog.startDistance,0.0f,50000.0f)<<"\n";
-        text<<"\n[DepthOfField]\nEnabled="<<(dof.enabled?"true":"false")
+        text<<"\n[DepthOfField]\nMasterEnabled="<<(dofAllowed?"true":"false")<<"\nEnabled="<<(dof.enabled?"true":"false")
             <<"\nAutofocus="<<(dof.autofocus?"true":"false")
             <<"\nFocusSpeed="<<std::clamp(dof.focusSpeed,0.1f,20.0f)
             <<"\nFocusRadius="<<std::clamp(dof.focusRadius,0.0f,0.2f)
@@ -248,7 +257,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
             });
         });
         text<<"\n[MotionBlur]\nEnabled="<<(motion.enabled?"true":"false")
-            <<"\nStrength="<<std::clamp(motion.strength,0.0f,4.0f)
+            <<"\nStrength="<<std::clamp(motion.strength,0.0f,10.0f)
             <<"\nMaxRadius="<<std::clamp(motion.radius,1.0f,64.0f)<<"\nSamples="<<motion.samples<<"\n";
         auto temporary=path.wstring()+L".tmp";
         {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<text.str();file.flush();if(!file)return false;}

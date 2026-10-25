@@ -9,7 +9,7 @@ void Check(bool value,const char* text){if(!value){std::printf("FAIL: %s\n",text
 bool Same(const Settings& a,const Settings& b) {
     return static_cast<const ColorSettings&>(a)==static_cast<const ColorSettings&>(b) &&
         a.interior==b.interior && a.exterior==b.exterior && a.exteriorNight==b.exteriorNight &&
-        a.motion==b.motion && a.enabled==b.enabled && a.separateProfiles==b.separateProfiles &&
+        a.motion==b.motion && a.showFps==b.showFps && a.enabled==b.enabled && a.separateProfiles==b.separateProfiles &&
         a.profilesConfigured==b.profilesConfigured && a.transitionSeconds==b.transitionSeconds &&
         a.dayHour==b.dayHour && a.nightHour==b.nightHour;
 }
@@ -19,12 +19,15 @@ int wmain(int argc,wchar_t** argv) {
     const auto choices=presets::List();Check(choices.size()==5,"Five presets retained");
     std::array<Settings,5> settings;
     for(std::size_t i=0;i<choices.size();++i) {
-        auto& value=settings[i];value.vibrance={true,1};value.clarity={true,1};value.motion={true,1.7f,37,16};const auto savedMotion=value.motion;
+        auto& value=settings[i];value.vibrance={true,1};value.clarity={true,1};value.dofAllowed=false;value.showFps=true;value.motion={true,1.7f,37,16};const auto savedMotion=value.motion;
         Check(presets::Apply(i,value),"Apply preset");
-        Check(value.enabled && value.separateProfiles && value.profilesConfigured && value.motion==savedMotion,"Preset keeps all user motion settings");
-        value.motion=MotionSettings{};
+        Check(value.enabled && value.separateProfiles && value.profilesConfigured && value.motion==savedMotion && value.showFps && !value.dofAllowed,"Preset keeps motion settings and the global DOF switch");
+        value.motion=MotionSettings{};value.dofAllowed=true;value.showFps=false;
         const ColorSettings* profiles[]={&value,&value.interior,&value.exterior,&value.exteriorNight};
         for(const auto* p:profiles) {
+            Check(p->ssao.enabled && p->ssao.quality==0 && p->ssao.strength>0 && p->ssao.strength<=0.55f,"Every profile includes bounded SSAO in Balanced quality");
+            if(i==1)Check(p->temperature>=-10 && p->splitToning.strength<=0.1f && p->liftGammaGain.gainBlue<=1.01f,"Nordic avoids stacked strong blue grading");
+            if(i==3)Check(p->saturation>=1 && p->vibrance.strength>=0.12f,"Cinematic retains full color in every profile");
             Check(p->vibrance.enabled && p->vibrance.strength>0 && p->vibrance.strength<=0.5f,"Every profile has a bounded Vibrance setting");
             Check(p->clarity.enabled==(i!=4),"Soft Focus preserves softness; other presets use Clarity");
             Check(p->sharpen<=0.1f,"Sharpness stays bounded alongside Clarity");
@@ -39,6 +42,7 @@ int wmain(int argc,wchar_t** argv) {
             Check(p->filmGrain.strength<=0.1f && (!p->chromaticAberration.enabled || p->chromaticAberration.strength<=0.25f),"Grain and aberration remain restrained");
 
         }
+        Check(value.exteriorNight.ssao.strength<value.exterior.ssao.strength,"Night uses gentler ambient occlusion");
         Check(value.exteriorNight.vibrance.strength<value.exterior.vibrance.strength,"Night uses less Vibrance");
         if(i!=4)Check(value.exteriorNight.clarity.strength<value.exterior.clarity.strength,"Night uses less Clarity");
         const auto path=root/choices[i].name/"SKSE"/"Plugins"/"CGE.ini";

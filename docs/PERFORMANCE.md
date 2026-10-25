@@ -1,61 +1,63 @@
-# Rendering review: CGE 0.7.0
+# Rendering review: CGE 0.7.1
 
-## Optimizations with unchanged output
+## SSAO pipeline
 
-- Cache SDR and HDR output render-target views while their texture and format
-  remain unchanged, rather than creating a view in every active pass each frame.
-  Invalidate on resource changes and release cached swap-chain views before
-  ResizeBuffers/ResizeBuffers1. Disabled passes release their cached output.
-- When Lens Distortion follows color grading and/or motion blur, route the
-  preceding pass to an existing intermediate texture. This removes the second
-  full-screen CopyResource without changing pass order or UNORM quantization.
-  The combination uses one initial copy rather than two. A single 1080p RGBA8
-  copy carries 7.91 MiB; at 4K it carries 31.64 MiB, excluding read/write overhead.
-- Upload the SSAO constant buffer only when its filtering axis changes. The
-  same five passes need three updates instead of five. Samples, resolution,
-  formats, radius and bilateral weights are unchanged by this optimization.
-- Reuse cached LUT diagnostic text rather than rebuilding the active filename
-  string each frame. Restore the correct status after disabling/re-enabling.
+SSAO computes occlusion after the native depth prepass and applies it to
+verified directional ambient calculations during opaque material rendering.
+It no longer copies or multiplies the already-lit HDR image.
 
-There is no reduction of sample counts, effect quality or render resolution.
-The changes above were validated separately from the visual corrections below.
-All 32 deterministic captures were byte-identical before and after optimization,
-covering all eight SDR pass combinations and eight HDR chains, twice each.
-They use WARP at 96x72. This validates those output paths; it is not an exhaustive
-proof for all hardware and scenes or an in-game FPS benchmark.
+The horizon search reads a dedicated R32 linear-depth target instead of the
+16-byte geometry target. Depth and normal precision, quality resolutions,
+direction counts and sample budgets are unchanged. Repeated sample coordinates
+and samples outside the world-space depth radius are skipped.
 
-## Motion Blur corrections
+Balanced writes its nearest-surface guide alongside raw occlusion. Filtering
+and upsampling reuse the guide instead of searching each 2x2 footprint again
+for every tap. High and Ultra combine the vertical bilateral filter with final
+occlusion conversion, reducing their pipeline from five passes to four.
+Explicit half-float rounding preserves the former intermediate result.
 
-The available MO2 log contained earlier valid native vectors but the latest
-sessions started with Motion Blur off. Visual preset application previously
-reset that global option. Built-in presets now preserve its toggle, intensity,
-radius and sample count. Manual INI replacement still replaces the entire INI.
+Targets are reused until dimensions or quality change. The additional linear
+depth and reduced guide consume more memory in exchange for fewer texture reads.
+No per-material replay, CPU readback or shader-binding interception is used.
+Shader variants are transformed once at creation. An inactive control buffer
+skips their occlusion lookup.
 
-The depth rejection now predicts the local planar depth gradient, so a sloping
-surface is not treated as a silhouette. Opposite depth gradients at isolated
-foreground pixels keep a zero slope, retaining foreground/background rejection.
-Intensity extends from 2 to 4; new settings and Natural use 1 instead of 0.5.
-Strong uses 2.5 instead of 1.5. Existing saved values are not overwritten.
-Native TAA, native resolution and valid motion/depth buffers remain required.
-No native vector decoding change was needed after reviewing the formats.
+## Measurements
 
-## SSAO corrections
+A synthetic 1920x1080 scene on an AMD Radeon RX 9070 XT produced the following
+median time per frame from GPU-completed batches:
 
-Reject shallow world-space self-occlusion, suppress the weakest visibility
-changes and cap darkening before strength. Light Protection uses HDR luminance
-to preserve bright surfaces. It defaults to 1 and saves per profile. This is
-an approximation because the current native hook runs after scene lighting;
-CGE still cannot separate the ambient and direct lighting contributions.
-These corrections deliberately change SSAO output and are not counted as
-lossless optimizations. In-game screenshots show broad darkening beyond contact regions. The feature
-remains beta; this issue is not claimed fixed.
+| Quality | Before | After | Reduction |
+| --- | ---: | ---: | ---: |
+| Balanced | 1.209 ms | 0.369 ms | 69.5% |
+| High | 3.101 ms | 1.836 ms | 40.8% |
+| Ultra | 5.237 ms | 3.057 ms | 41.6% |
+
+Each of three paired runs takes the median of three batches of 32 SSAO frames.
+Timing includes CPU submission and completion waiting; isolated GPU timestamps
+were unavailable. These figures are not in-game FPS predictions. Scene content,
+GPU load and hardware affect the result.
+
+The before/after 1920x1080 and 1280x720 occlusion buffers were bit-identical in
+all three quality modes. This checks the comparison scenes; it does not prove
+identical output for every possible input or hardware implementation.
+
+## Other rendering paths
+
+Color, motion blur and lens distortion reuse intermediate textures. Lens
+Distortion follows the other SDR processing without a redundant full-screen
+copy. Output views are cached while their resource and format remain unchanged
+and released before swap-chain resizing.
+
+Context isolation restores native state after each effect. LUT status strings
+are cached. Motion blur depth rejection accounts for sloping surfaces while
+retaining foreground/background rejection. Presets preserve its global settings.
 
 ## Verification
 
-59 automated tests pass, including all 23 SE/AE runtime fixtures, sloping motion,
-foreground rejection, stronger motion, preset persistence, SSAO highlights,
-settings, HUD preservation, resize/reattachment, cache invalidation and repeated
-frame captures. CommonLibSSE-NG remains linked and no new native hook is added.
-
-The reported real 1.6.1170 startup crash remains unconfirmed. Skyrim VR is still
-excluded. New in-game motion/SSAO behavior and FPS gains are not yet measured.
+63 automated tests pass, covering GPU effects, native ambient/direct/emissive
+separation, settings, profiles, preset color retention, the FPS HUD, framework
+controls, hook conflicts, resizing, resource ownership and repeated captures.
+The 23 SE/AE runtime fixtures do not establish real-game compatibility for each
+executable. The reported 1.6.1170 failures are not claimed resolved. VR is excluded.

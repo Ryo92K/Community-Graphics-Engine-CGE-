@@ -4,12 +4,16 @@
 #include <vector>
 #include <utility>
 #include <cmath>
+#include <cstdint>
 using Page=void(__stdcall*)();
 struct Vec2 {float x,y;};
 namespace {
 std::vector<std::pair<std::string,Page>> pages;
 float version=3.8f;
 bool blocking{},disabled{};
+Page hud{};
+unsigned hudDraws{};std::string hudText;
+Vec2 hudPosition{};
 std::vector<bool> disabledStack;
 struct ObservedControl {int type;std::string label;bool disabled;};
 std::vector<ObservedControl> controls;
@@ -21,6 +25,15 @@ bool Match(int type,const char* label) {
 }
 }
 extern "C" {
+__declspec(dllexport) std::int64_t RegisterHudElement(Page callback){hud=callback;return 1;}
+__declspec(dllexport) void* igGetForegroundDrawList_Nil(){return &hudDraws;}
+__declspec(dllexport) void ImDrawList_AddText_Vec2(void*,Vec2 position,unsigned,const char* text,const char*) {
+    ++hudDraws;hudText=text;hudPosition=position;
+}
+__declspec(dllexport) unsigned TestHudFrame(){hudDraws=0;hudText.clear();if(hud)hud();return hudDraws;}
+__declspec(dllexport) const char* TestHudText(){return hudText.c_str();}
+__declspec(dllexport) float TestHudX(){return hudPosition.x;}
+__declspec(dllexport) float TestHudY(){return hudPosition.y;}
 __declspec(dllexport) void AddSectionItem(const char* path,Page page){pages.emplace_back(path,page);}
 __declspec(dllexport) float GetMenuFrameworkVersion(){return version;}
 __declspec(dllexport) bool IsAnyBlockingWindowOpened(){return blocking;}

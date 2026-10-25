@@ -46,7 +46,16 @@ int wmain(int argc,wchar_t** argv) {
             const auto difference=Difference(images[a],images[b]);std::printf("scope=%u pair=%u/%u mean difference=%.2f\n",scope,a,b,difference);
             Check(difference>3,"Preset styles remain visibly distinguishable");
         }
-        Check(Difference(images[1],images[2])>10,"Cool Nordic and golden Fantasy remain strongly separated");
+        const auto cool=images[1][48*width+8],warm=images[2][48*width+8];
+        Check(int(cool[2])-int(cool[0])<=15,"Nordic neutral gray has no heavy blue cast");
+        Check(warm[0]>cool[0] && warm[2]<cool[2],"Nordic and Fantasy keep distinct cool and warm balances");
+        double chromaBefore=0,chromaAfter=0;
+        for(unsigned stripe=1;stripe<8;++stripe) {
+            const auto at=48*width+stripe*16+8;const auto a=input[at],b=images[3][at];
+            chromaBefore+=int(std::max({a[0],a[1],a[2]}))-int(std::min({a[0],a[1],a[2]}));
+            chromaAfter+=int(std::max({b[0],b[1],b[2]}))-int(std::min({b[0],b[1],b[2]}));
+        }
+        Check(chromaAfter>=0.9*chromaBefore,"Cinematic preserves scene color instead of approaching grayscale");
         Check(Difference(images[0],input)<Difference(images[3],input),"Natural keeps a lighter treatment than Cinematic");
     }
     std::puts("PASS: visible preset differences across day, interior and night, supplied LUTs and alpha.");

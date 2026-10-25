@@ -9,6 +9,8 @@
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstdio>
 namespace cge::menu {
 namespace {
                                                                            
@@ -32,9 +34,12 @@ struct Api {
     void (*popId)(){};
     void (*beginDisabled)(bool){};
     void (*endDisabled)(){};
+    std::int64_t (*registerHud)(Page){};
+    void* (*foreground)(){};
+    void (*drawText)(void*,Vec2,unsigned,const char*,const char*){};
 };
 Api api;
-bool registered{},dirty{};
+bool registered{},dirty{},hudReady{};
 int selectedProfile{-1};
 std::optional<Settings> beforePreset;
 const char* appliedPreset{};
@@ -80,16 +85,20 @@ void Render(unsigned page) noexcept {
         if(!graphics::ReadSettings(view)){Text("Renderer not ready");return;}
         auto settings=view.settings;
         if(api.checkbox("Effects enabled",&settings.enabled))Changed();
+        if(page==6 && api.checkbox("Depth of field (all profiles)",&settings.dofAllowed))Changed();
         api.separator();
         if(page==0) {
-            Text("SSAO (BÊTA)");api.sameLine(0,-1);Text(view.ssao.empty()?"HDR pass not reached":view.ssao.c_str());
+            api.beginDisabled(!hudReady);
+            if(api.checkbox("Show FPS",&settings.showFps))Changed();
+            api.endDisabled();
+            Text("SSAO");api.sameLine(0,-1);Text(view.ssao.empty()?"Opaque pass not reached":view.ssao.c_str());
             Text("Bloom");api.sameLine(0,-1);
             Text(view.bloom.empty()?"HDR pass not reached":view.bloom.c_str());
             Text("Motion Blur");api.sameLine(0,-1);Text(MotionLabel(view.motion));
             Text("Distance Fog");api.sameLine(0,-1);Text(view.fog.empty()?"HDR pass not reached":view.fog.c_str());
             Text("Depth of Field");api.sameLine(0,-1);Text(view.dof.empty()?"HDR pass not reached":view.dof.c_str());
         }else if(page==7) {
-            Text("Presets replace visual settings and keep Motion Blur. Save to keep changes.");
+            Text("Presets keep Motion Blur and the global DOF switch. Save to keep changes.");
             const auto choices=presets::List();
             for(std::size_t i=0;i<choices.size();++i) {
                 if(Button(choices[i].name)) {
@@ -120,7 +129,7 @@ void Render(unsigned page) noexcept {
         }else if(page==4) {
             if(api.checkbox("Motion blur enabled",&settings.motion.enabled))Changed();
             api.beginDisabled(!settings.enabled || !settings.motion.enabled);
-            Control("Intensity",settings.motion.strength,0,4,1);
+            Control("Intensity",settings.motion.strength,0,10,1);
             Control("Blur Radius (px)",settings.motion.radius,1,64,24);
             constexpr const char* choices[]={"8 samples","12 samples","16 samples"};
             int quality=settings.motion.samples==8?0:settings.motion.samples==16?2:1;
@@ -129,7 +138,7 @@ void Render(unsigned page) noexcept {
             }
             if(Button("Natural")){settings.motion={true,1.0f,24,12};Changed();}
             api.sameLine(0,-1);
-            if(Button("Strong")){settings.motion={true,2.5f,48,16};Changed();}
+            if(Button("Strong")){settings.motion={true,5.0f,64,16};Changed();}
             api.endDisabled();
             Text(MotionLabel(view.motion));
         }else {
@@ -178,7 +187,7 @@ void Render(unsigned page) noexcept {
                     profile->ssao.quality=std::clamp(profile->ssao.quality,0,2);Changed();
                 }
                 FinishingParameters(*profile,[&](const char* effect,auto,const char* label,float& value,float low,float high,float neutral) {
-                    if(std::string_view(effect)=="SSAO")Control(label,value,low,high,neutral);
+                    if(std::string_view(effect)=="SSAO" && std::string_view(label)!="Light Protection")Control(label,value,low,high,neutral);
                 });
                 if(Button("Reset SSAO")){profile->ssao=SsaoSettings{};Changed();}
                 api.endDisabled();
@@ -258,7 +267,7 @@ void Render(unsigned page) noexcept {
                 api.endDisabled();
             }else if(page==6) {
                 if(api.checkbox("Depth of field enabled",&profile->dof.enabled))Changed();
-                api.beginDisabled(!settings.enabled || !profile->dof.enabled);
+                api.beginDisabled(!settings.enabled || !settings.dofAllowed || !profile->dof.enabled);
                 constexpr const char* focusModes[]={"Manual","Auto"};
                 int focusMode=profile->dof.autofocus?1:0;
                 if(api.combo("Focus Mode",&focusMode,focusModes,2,-1) && focusMode>=0 && focusMode<2) {
@@ -297,6 +306,14 @@ void Render(unsigned page) noexcept {
         }
         Footer(settings,page==0);
     }catch(...){                                                                    }
+}
+void __stdcall FpsOverlay() {
+    const float fps=graphics::OverlayFps();
+    if(!hudReady || !std::isfinite(fps) || fps<=0)return;
+    auto* list=api.foreground();if(!list)return;
+    char text[32]{};std::snprintf(text,sizeof(text),"FPS: %.0f",double(fps));
+    api.drawText(list,{13,13},0xff000000u,text,nullptr);
+    api.drawText(list,{12,12},0xffffffffu,text,nullptr);
 }
 void __stdcall General(){Render(0);}
 void __stdcall Profiles(){Render(1);}
@@ -357,15 +374,19 @@ bool Register(std::string& status) {
         "Community Graphics Engine/Color/Split Toning","Community Graphics Engine/Color/Vignette",
         "Community Graphics Engine/Color/Debanding",
         "Community Graphics Engine/Effects/Bloom","Community Graphics Engine/Effects/Lens Dirt",
-        "Community Graphics Engine/Effects/SSAO (BÊTA)","Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
+        "Community Graphics Engine/Effects/SSAO","Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
         "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Sharpness",
         "Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Film Grain",
         "Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Lens Distortion"};
     const Page pages[]={General,Presets,Profiles,Color,LiftGammaGain,Lut,Vibrance,SplitToning,Vignette,Debanding,
         Bloom,LensDirt,Ssao,Fog,Dof,Motion,Sharpness,Clarity,FilmGrain,ChromaticAberration,LensDistortion};
     for(unsigned i=0;i<21;++i)api.addPage(paths[i],pages[i]);
+    const bool overlay=Bind(module,"RegisterHudElement",api.registerHud) &&
+        Bind(module,"igGetForegroundDrawList_Nil",api.foreground) && Bind(module,"ImDrawList_AddText_Vec2",api.drawText);
+    if(overlay){hudReady=true;if(api.registerHud(FpsOverlay)<0)hudReady=false;}
     registered=true;
     status="CGE SKSE Menu Framework ready: 21 pages registered; legacy menu and hotkeys removed";
+    status+=hudReady?"; FPS HUD ready":"; FPS HUD unavailable: missing framework HUD exports";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

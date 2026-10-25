@@ -26,6 +26,7 @@ const unsigned char* depthNativeRenderer{};
 const void* worldRootSingleton{};
 unsigned char* interfaceEntry{};
 std::vector<unsigned char> interfaceOriginal,interfacePatch;
+unsigned char* NearRelay(unsigned char* call);
 void Interface(std::int64_t manager) {
     beforeInterface();
     commonlib::InvokeInterface(reinterpret_cast<std::uintptr_t>(drawInterface),manager);
@@ -266,21 +267,25 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     if(!before){error="Missing interface callback";return false;}
     auto* entry=Resolve(executable,library,runtime::Address::Interface,32,error);
     if(!entry)return false;
-    const auto length=ExecutableSpan(entry,32)?PrologueLength({entry,32}):0;
+    const auto length=ExecutableSpan(entry,32)?PrologueLength({entry,32},5):0;
     if(!length) {
         error="Interface prologue is unsupported or already hooked; scene effects disabled";return false;
     }
     interfaceOriginal.assign(entry,entry+length);
-    auto* relay=static_cast<unsigned char*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+    auto* relay=NearRelay(entry);
     if(!relay){error="Interface relay allocation failed";return false;}
     memcpy(relay,entry,length);
     AbsoluteJump(relay+length,entry+length);
+    AbsoluteJump(relay+40,reinterpret_cast<const void*>(Interface));
+    const auto branch=reinterpret_cast<std::intptr_t>(relay+40)-reinterpret_cast<std::intptr_t>(entry+5);
+    if(branch<INT32_MIN || branch>INT32_MAX){VirtualFree(relay,0,MEM_RELEASE);error="Interface relay outside branch range";return false;}
     DWORD old{};
     if(!VirtualProtect(relay,64,PAGE_EXECUTE_READ,&old)){
         VirtualFree(relay,0,MEM_RELEASE);error="Interface relay protection failed";return false;
     }
     FlushInstructionCache(GetCurrentProcess(),relay,64);
-    interfacePatch.assign(length,0x90);AbsoluteJump(interfacePatch.data(),reinterpret_cast<const void*>(Interface));
+    interfacePatch.assign(length,0x90);interfacePatch[0]=0xe9;
+    const auto displacement=static_cast<std::int32_t>(branch);memcpy(interfacePatch.data()+1,&displacement,4);
     DWORD protection{};
     if(!VirtualProtect(entry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)){
         VirtualFree(relay,0,MEM_RELEASE);error="Interface entry cannot be patched";return false;
@@ -303,7 +308,29 @@ struct CallPatch {
     unsigned char* relay{};
     std::array<unsigned char,5> original{},patch{};
 };
-std::vector<CallPatch> hdrPatches;
+std::vector<CallPatch> hdrPatches,opaquePatches;
+using WorldDraw=void(*)(bool);
+using OpaqueDraw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,int);
+using DecalDraw=void(*)(void*,std::uint32_t);
+WorldDraw drawWorld{};
+OpaqueDraw drawOpaque{};
+DecalDraw drawDecals{};
+void(*beginOpaque)() noexcept{};
+void(*endOpaque)() noexcept{};
+thread_local bool inMainWorld=false;
+void World(bool value) {
+    const bool parent=inMainWorld;inMainWorld=true;
+    drawWorld(value);
+    endOpaque();inMainWorld=parent;
+}
+void Opaque(void* batch,std::uint32_t start,std::uint32_t end,std::uint32_t flags,int group) {
+    if(inMainWorld)beginOpaque();
+    drawOpaque(batch,start,end,flags,group);
+}
+void Decals(void* accumulator,std::uint32_t flags) {
+    if(inMainWorld)endOpaque();
+    drawDecals(accumulator,flags);
+}
 void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
                                                                         
     void* raw{};
@@ -354,9 +381,25 @@ bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
         auto* target=call+5+displacement;
         HMODULE owner{};
         if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable ||
-            !ExecutableSpan(target,32) || !PrologueLength({target,32}) || (draw && draw!=target)) {
-            error="Unexpected HDR call target; HDR effects disabled";return false;
+            reinterpret_cast<LPCWSTR>(target),&owner)) {
+            error="Unexpected HDR call target: target module unavailable; HDR effects disabled";return false;
+        }
+        if(owner!=executable) {
+            char path[32768]{};const auto length=GetModuleFileNameA(owner,path,32768);
+            path[32767]=0;const char* name=length?strrchr(path,'\\'):nullptr;
+            error="Unexpected HDR call target: outside executable, module="+std::string(name?name+1:length?path:"unknown")+"; HDR effects disabled";return false;
+        }
+        if(!ExecutableSpan(target,32)) {
+            error="Unexpected HDR call target: unreadable or non-executable entry; HDR effects disabled";return false;
+        }
+        if(!PrologueInstruction({target,32})) {
+            error="Unexpected HDR call target: unsupported entry bytes";
+            constexpr char hex[]="0123456789ABCDEF";
+            for(unsigned n=0;n<8;++n){error+=' ';error+=hex[target[n]>>4];error+=hex[target[n]&15];}
+            error+="; HDR effects disabled";return false;
+        }
+        if(draw && draw!=target) {
+            error="Unexpected HDR call target: tone-map calls use different native targets; HDR effects disabled";return false;
         }
         draw=target;
         if(layout.Id(runtime::Address::Draw)) {
@@ -398,7 +441,68 @@ bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
     hdrPatches=std::move(pending);tonemapCall=hdrPatches.front().call;return true;
 }
 
+bool HookOpaque(HMODULE executable,const std::filesystem::path& library,
+    void(*begin)() noexcept,void(*end)() noexcept,std::string& error) {
+    std::lock_guard lock(mutex);
+    if(!opaquePatches.empty())return true;
+    if(!begin || !end){error="Missing opaque callbacks";return false;}
+    const auto& layout=runtime::selected;const bool se=layout.family==runtime::Family::SE;
+    const unsigned worldOffset=se?0x831:layout.version>=runtime::Pack(6,1130)?0x85e:0x841;
+    auto* frame=Resolve(executable,library,runtime::Address::WorldFrame,worldOffset+5,error);
+    auto* opaque=Resolve(executable,library,runtime::Address::WorldOpaque,se?0x31e:0x30d,error);
+    if(!frame || !opaque)return false;
+    std::array<unsigned char*,3> calls={frame+worldOffset,opaque+(se?0x8e:0x84),opaque+(se?0x319:0x308)};
+    std::array<void*,3> callbacks={reinterpret_cast<void*>(World),reinterpret_cast<void*>(Opaque),reinterpret_cast<void*>(Decals)};
+    std::array<void*,3> targets{};std::vector<CallPatch> pending;
+    auto discard=[&] {
+        for(auto& item:pending) {
+            DWORD old{},ignored{};
+            if(item.call && item.patch[0] && !memcmp(item.call,item.patch.data(),5) &&
+                VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&old)) {
+                memcpy(item.call,item.original.data(),5);VirtualProtect(item.call,5,old,&ignored);
+                FlushInstructionCache(GetCurrentProcess(),item.call,5);
+            }
+            if(item.relay)VirtualFree(item.relay,0,MEM_RELEASE);
+        }
+    };
+    for(unsigned i=0;i<3;++i) {
+        auto* call=calls[i];
+        if(!ExecutableSpan(call,5) || call[0]!=0xe8) {discard();error="Opaque call signature differs or is already hooked";return false;}
+        std::int32_t displacement{};memcpy(&displacement,call+1,4);auto* target=call+5+displacement;
+        HMODULE owner{};
+        if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable || !ExecutableSpan(target,32) || !PrologueInstruction({target,32})) {
+            discard();error="Opaque call target is unsupported";return false;
+        }
+        targets[i]=target;CallPatch item;item.call=call;memcpy(item.original.data(),call,5);
+        item.relay=NearRelay(call);
+        if(!item.relay){discard();error="Opaque relay allocation failed";return false;}
+        pending.push_back(item);auto& patch=pending.back();AbsoluteJump(patch.relay,callbacks[i]);
+        DWORD old{};
+        if(!VirtualProtect(patch.relay,64,PAGE_EXECUTE_READ,&old)){discard();error="Opaque relay protection failed";return false;}
+        FlushInstructionCache(GetCurrentProcess(),patch.relay,64);
+        const auto delta=reinterpret_cast<std::intptr_t>(patch.relay)-reinterpret_cast<std::intptr_t>(call+5);
+        if(delta<INT32_MIN || delta>INT32_MAX){discard();error="Opaque relay outside branch range";return false;}
+        patch.patch[0]=0xe8;const auto relative=static_cast<std::int32_t>(delta);memcpy(patch.patch.data()+1,&relative,4);
+    }
+    drawWorld=reinterpret_cast<WorldDraw>(targets[0]);drawOpaque=reinterpret_cast<OpaqueDraw>(targets[1]);
+    drawDecals=reinterpret_cast<DecalDraw>(targets[2]);beginOpaque=begin;endOpaque=end;
+    for(auto& item:pending) {
+        DWORD protection{},ignored{};
+        if(!VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&protection)){discard();error="Opaque call cannot be patched";return false;}
+        memcpy(item.call,item.patch.data(),5);VirtualProtect(item.call,5,protection,&ignored);
+        FlushInstructionCache(GetCurrentProcess(),item.call,5);
+    }
+    opaquePatches=std::move(pending);return true;
+}
+
 void Shutdown() noexcept {
+    for(const auto& item:opaquePatches) {
+        DWORD old{},ignored{};
+        if(item.call && !memcmp(item.call,item.patch.data(),5) && VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&old)) {
+            memcpy(item.call,item.original.data(),5);VirtualProtect(item.call,5,old,&ignored);FlushInstructionCache(GetCurrentProcess(),item.call,5);
+        }
+    }
     for(const auto& item:hdrPatches) {
         if(item.call && !memcmp(item.call,item.patch.data(),5)) {
             DWORD protection{},ignored{};

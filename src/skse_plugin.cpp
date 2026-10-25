@@ -12,6 +12,25 @@ std::filesystem::path directory,logPath;
 std::mutex logMutex;
 PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN original{};
 bool loaded{};
+void InitializeLogPath() {
+    if(!logPath.empty())return;
+    wchar_t path[32768]{};const auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
+    if(!length || length>=ARRAYSIZE(path))return;
+    directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
+}
+void BootstrapTrace(HINSTANCE instance) noexcept {
+    wchar_t path[32768]{};
+    const DWORD count=GetModuleFileNameW(instance,path,32768);
+    if(!count || count>=32768)return;
+    DWORD end=count;while(end && path[end-1]!=L'\\')--end;
+    constexpr wchar_t name[]=L"CGE-loader.log";
+    if(!end || end+sizeof(name)/sizeof(wchar_t)>32768)return;
+    for(DWORD i=0;i<sizeof(name)/sizeof(wchar_t);++i)path[end+i]=name[i];
+    HANDLE file=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)return;
+    constexpr char text[]="CGE 0.7.1: DLL process attach reached; SKSE Load has not run yet.\r\n";
+    DWORD written{};WriteFile(file,text,sizeof(text)-1,&written,nullptr);CloseHandle(file);
+}
 void Log(const char* format,...) {
     if(logPath.empty())return;
     char text[2048]{};va_list args;va_start(args,format);vsnprintf_s(text,sizeof(text),_TRUNCATE,format,args);va_end(args);
@@ -58,9 +77,12 @@ __declspec(dllexport) constinit cge::skse::Metadata SKSEPlugin_Version={
         cge::runtime::Pack(7,99),cge::runtime::Pack(7,104),cge::runtime::Pack(5,97),0},0
 };
 __declspec(dllexport) bool SKSEPlugin_Query(const cge::skse::Interface* api,cge::skse::Info* info) {
+    InitializeLogPath();
+    const bool accepted=info && cge::commonlib::Compatible(api);
+    Log("CGE SKSE query: runtime=0x%08X; SKSE=0x%08X; accepted=%u",api?api->runtimeVersion:0,api?api->skseVersion:0,accepted?1u:0u);
     if(!info)return false;
     *info={1,"Community Graphics Engine",cge::skse::Version};
-    return cge::commonlib::Compatible(api);
+    return accepted;
 }
 __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
     try {
@@ -71,7 +93,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         if(!cge::commonlib::Compatible(api)){Log("CGE load refused: unsupported SKSE interface or executable");return false;}
         if(loaded)return api->runtimeVersion==cge::runtime::selected.version;
         cge::runtime::selected=*cge::runtime::Select(api->runtimeVersion);
-        Log("Community Graphics Engine (CGE) 0.7.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.7.1 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
                                                                                           
                                                                                  
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -125,6 +147,10 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             cge::graphics::SetDepthProbe(cge::startup::PollDepth);
             Log("CGE native depth resources ready: main depth, WorldRootCamera, world root");
         }else Log("CGE depth resources unavailable: %s",error.c_str());
+        Log("CGE startup stage: native ambient lighting hooks");
+        if(cge::startup::HookOpaque(GetModuleHandleW(nullptr),library,cge::graphics::BeginOpaque,cge::graphics::EndOpaque,error))
+            Log("CGE opaque hooks ready: visibility before material lighting; ambient occlusion ends before blended decals");
+        else Log("CGE native SSAO unavailable: %s",error.c_str());
         Log("CGE startup stage: HDR hook");
         if(cge::startup::HookTonemap(GetModuleHandleW(nullptr),library,cge::graphics::HDR,error))
             Log("CGE HDR hook ready: main cinematic tone mapping; fog and bloom run before tone mapping");
@@ -138,7 +164,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
 }
 }
 BOOL WINAPI DllMain(HINSTANCE instance,DWORD reason,LPVOID) {
-    if(reason==DLL_PROCESS_ATTACH)module=instance;
+    if(reason==DLL_PROCESS_ATTACH){module=instance;BootstrapTrace(instance);}
     if(reason==DLL_PROCESS_DETACH){cge::startup::Shutdown();}
     return TRUE;
 }

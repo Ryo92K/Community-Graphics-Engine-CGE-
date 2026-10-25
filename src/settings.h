@@ -127,6 +127,8 @@ struct MotionSettings {
 };
 struct Settings:ColorSettings {
     bool enabled{true};
+    bool dofAllowed{true};
+    bool showFps{false};
     bool separateProfiles{false};
     float transitionSeconds{1.5f};
     ColorSettings interior,exterior,exteriorNight;

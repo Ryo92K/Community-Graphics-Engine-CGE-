@@ -25,10 +25,13 @@ struct SettingsView {
     std::string bloom,fog,dof,lut,ssao;
 };
 bool ReadSettings(SettingsView&);
+float OverlayFps() noexcept;
 void ApplySettings(const Settings&,bool resetProfiles=false);
 bool SaveSettings();
 std::filesystem::path LutDirectory();
 void ReloadLuts();
+void BeginOpaque() noexcept;
+void EndOpaque() noexcept;
 void Scene() noexcept;
 void HDR(ID3D11ShaderResourceView*) noexcept;
 void Frame(IDXGISwapChain*) noexcept;

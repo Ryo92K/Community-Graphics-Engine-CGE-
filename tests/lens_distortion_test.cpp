@@ -66,5 +66,12 @@ int main() {
             Check(count==1 && restored.Width==12 && restored.TopLeftX==3 && restoredTarget.Get()==target.Get(),"Native render state restored");context->ClearState();
         }
     }
+    D3D11_TEXTURE2D_DESC rejected{};rejected.Width=64;rejected.Height=32;
+    rejected.MipLevels=rejected.ArraySize=rejected.SampleDesc.Count=1;
+    rejected.Format=DXGI_FORMAT_R10G10B10A2_UNORM;rejected.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ComPtr<ID3D11Texture2D> tenBit;Check(SUCCEEDED(device->CreateTexture2D(&rejected,nullptr,&tenBit)),"10-bit diagnostic fixture");
+    ColorSettings active;active.exposure=1;const auto diagnosis=renderer.Draw(tenBit.Get(),active,true);
+    Check(diagnosis.find("format=24 (R10G10B10A2_UNORM)")!=std::string::npos && diagnosis.find("size=64x32, samples=1")!=std::string::npos,
+        "Unsupported output reports actual format, dimensions and samples");
     std::puts("PASS: signed distortion, crop, center, symmetry, alpha, bounds, bypass, formats, resize and color/motion order.");
 }

@@ -76,8 +76,8 @@ int main() {
     stripe();upload();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)==255 && pixel(15)==0,"Camera-cut sized vectors are rejected");
     for(unsigned i=0;i<32*16;++i)vectors[i*2]=0.25f;
-    motion.settings.strength=4;motion.settings.radius=48;stripe();upload();renderer.Draw(output.Get(),color,true,motion);
-    Check(pixel(16)<240,"Extended intensity produces visible blur");motion.settings.strength=1;motion.settings.radius=2;
+    motion.settings.strength=10;motion.settings.radius=48;stripe();upload();renderer.Draw(output.Get(),color,true,motion);
+    Check(pixel(16)<240,"Intensity ten produces visible blur");motion.settings.strength=1;motion.settings.radius=2;
     motion.settings.enabled=false;stripe();upload();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)==255,"Effect toggle bypasses motion");
     motion.settings.enabled=true;stripe();renderer.Draw(output.Get(),color,false,motion);

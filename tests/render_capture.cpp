@@ -75,7 +75,7 @@ int wmain(int argc,wchar_t** argv) {
         for(unsigned frame=0;frame<2;++frame) {
             context->UpdateSubresource(hdr.Get(),0,nullptr,colors.data(),width*16,0);
             SsaoSettings ssao{true,0.65f,60,0.05f,1.5f,8000,int(mode%3)};
-            if(mode&1)ao.Draw(hdrView.Get(),inputs,ssao,true);
+            if(mode&1)ao.PrepareOcclusion(inputs,ssao,true);
             if(mode&2)fog.Draw(hdrView.Get(),inputs,FogSettings{true,0.4f,10},true);
             if(mode&4)dof.Draw(hdrView.Get(),inputs,DofSettings{true,100,0.6f},true);
             bloom.Draw(hdrView.Get(),BloomSettings{true,0.2f,0.6f,32},true,LensDirtSettings{bool(mode&1),0.5f,0.25f});

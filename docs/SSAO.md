@@ -1,91 +1,106 @@
-# SSAO (beta)
+# SSAO
 
-This feature is experimental and disabled by default. In-game testing has shown
-broad darkening beyond contact areas. Light Protection reduces the effect but
-does not solve the underlying lighting integration limitation. Disable SSAO if
-it produces a dark or gray veil. This is not the final native lighting backend.
-
-CGE provides an independent horizon-based screen-space ambient occlusion pass.
-It operates on the native HDR scene before fog, depth of field, bloom and tone
-mapping, using the current world camera and native depth. It adds contact
-shadows around visible intersections without changing the HUD.
+CGE 0.7.1 calculates horizon-based screen-space occlusion from the current
+native world camera and the depth prepass. Validated material shaders apply the
+result to directional ambient lighting while drawing opaque geometry. The old
+post-lighting HDR multiplier has been removed.
 
 ## Controls
 
-Enable SSAO on Effects / SSAO (BÊTA), choose the active profile and press Save.
-Existing settings and presets leave it disabled until explicitly enabled.
+Open Effects / SSAO, enable SSAO for the selected profile and save.
+Strength blends from no occlusion at 0 to full computed occlusion at 1.
+Radius sets the search distance in game units. Bias rejects near-tangent
+samples. Power shapes the visibility response. Max Distance fades the effect
+out over the final 20 percent of its range.
 
-| Control | Range | Default | Purpose |
-| --- | --- | --- | --- |
-| Quality | Balanced, High, Ultra | High | Resolution and horizon samples |
-| Light Protection | 0 to 1 | 1 | Reduce occlusion in bright HDR lighting |
-| Strength | 0 to 1 | 0.65 | Blend between the original scene and occlusion |
-| Radius (units) | 1 to 250 | 60 | World-space reach around a surface |
-| Bias | 0.01 to 0.3 | 0.05 | Reject shallow angles that can cause self-shadowing |
-| Power | 1 to 4 | 1.5 | Contrast of the occlusion response |
-| Max Distance (units) | 500 to 50000 | 8000 | Fade out distant occlusion |
+Balanced computes occlusion at half resolution. High and Ultra use full
+resolution with more directions and steps. All modes resolve to a full-size
+occlusion texture before material rendering. The base configuration keeps SSAO
+disabled; visual presets enable Balanced quality with style-specific strengths.
+The previous Light Protection setting is retained for INI compatibility but
+is no longer used or exposed: lighting separation replaces the brightness
+heuristic.
 
-Balanced uses half-resolution occlusion, eight directions and four steps.
-High uses full resolution, twelve directions and six steps. Ultra uses full
-resolution, sixteen directions and eight steps. The world radius is projected
-through the current frustum and capped at 128 screen pixels for bounded work.
-Strength zero and either enable switch bypass the passes and release targets.
+## Native lighting integration
 
-## Filtering
+Three verified call sites delimit the main-world opaque pass. CGE computes
+visibility after the native depth prepass and ends its bindings before blended
+decals and water. Reflection and first-person passes outside this scope remain
+unchanged. The CommonLibSSE-NG bridge and versioned Address Library adapters
+remain required. A missing identifier, unexpected instruction or hook conflict
+bypasses this backend without replacing it with an HDR dimming pass.
 
-A full-resolution geometry pass reconstructs view-space depth and normals.
-One-sided derivatives select the closest depth continuation to avoid normals
-crossing silhouettes. Each direction tracks the highest surface elevation with
-world-distance falloff. Samples less than two percent of the radius above the
-receiver tangent plane are rejected to reduce small self-occlusion. Sampling uses a fixed spatial pattern, without animated
-noise or a frame-history dependency.
+The device shader-creation hook recognizes the directional ambient matrix in
+loaded Shader Model 5.0 pixel shaders. It requires all three matching matrix
+rows, a shared normal operand and a valid position signature. CGE adds its own
+occlusion lookup and scales those three ambient results. Native direct lights,
+material sampling, emission, alpha and other render-target outputs remain in
+the original shader. Unknown signatures use the original bytecode.
 
-Two separable bilateral passes use depth and normal agreement to smooth the
-visibility field. Balanced selects the nearest valid surface in each 2x2 depth
-footprint and uses depth/normal-guided upsampling at composite time. Invalid
-samples and sky remain unchanged. Distance fades over the last 20 percent of
-the range; screen borders fade rather than inventing off-screen occluders.
+The transformed shader has an explicit control buffer at b13 and reads the
+occlusion texture at t126 only while enabled. A zero or unbound control buffer
+leaves ambient lighting unchanged and skips the texture lookup. CGE reserves
+these slots only for the opaque pass, checks for occupied bindings and releases
+its bindings afterwards. No context shader-binding hook, shader source dump,
+external graphics engine or redistributed game shader is required.
 
-All resources stay on the GPU. CGE uses an isolated D3D11 context state and
-restores the native state after rendering. Resources are recreated after a
-resolution, quality or HDR-format change. No new executable hook is introduced.
+The container reader validates sizes, instruction operands, input declarations,
+resource slots and the DXBC checksum. It rebuilds the checksum after patching.
+The installed local archive contained 6,924 matching shader programs. All were
+transformed successfully; all 6,924 variants were accepted by the WARP driver.
+These counts describe the inspected archive, not every Skyrim distribution.
 
-## Scope
+## Occlusion and filtering
 
-This pass reconstructs geometric normals from depth, without material normal
-maps or off-screen geometry. Transparent surfaces without their own depth use
-the depth behind them. It shades the already-lit HDR scene. Light Protection reduces the result using
-HDR luminance, fully protecting luminance 2 and above at its default strength.
-A three-percent visibility dead zone rejects weak uniform occlusion; maximum
-darkening is capped at 40 percent before Strength and Light Protection. These
-controls reduce a global dark veil but do not isolate the ambient lighting
-contribution. Dark materials under direct light can still receive occlusion.
-It is not global illumination, a temporal GTAO implementation or a substitute
-for ray tracing. Visual parity with any other graphics engine is not established.
+View-space depth and geometric normals are reconstructed on the GPU. One-sided
+normal derivatives select the closest depth continuation at silhouettes.
+Directional horizon searches use a world-space radius, tangent rejection and
+distance falloff. Two bilateral passes preserve depth and normal boundaries.
+Balanced uses nearest-surface downsampling and a guided full-resolution resolve.
+Sky and invalid depth produce zero occlusion; screen-edge fading avoids inventing
+off-screen occluders. The pattern is deterministic, without temporal history.
 
-Native TAA is optional. CGE adds no temporal accumulation or reprojection here.
-Disable Skyrim's native SSAO when comparing to avoid stacking two AO passes.
-Compatibility with external graphics engines or depth-altering injectors is
-not established. Start with Balanced if GPU frame time is a concern; actual
-GPU cost must be measured in game on the target hardware.
+All intermediate resources remain on the GPU. The calculation uses an isolated
+D3D11 context state and restores the native state. It does not copy or modify the
+HDR scene. Buffers are reused and resized when depth dimensions or quality change.
+The search reads a separate 32-bit linear-depth target. Balanced caches its
+nearest-surface guides; High and Ultra fuse the vertical filter and final
+conversion while retaining half-float rounding. These changes keep the existing
+sample budgets and quality resolutions. See PERFORMANCE.md for measurements.
 
-## Validation
+## Limits and testing
 
-The WARP test renders flat and sloping planes, a foreground step and a
-perpendicular wall-floor corner. It checks contact darkening, silhouette
-preservation, sky, HDR hue and alpha, world-radius cutoff, near-plane invariance,
-quality levels, deterministic frames, odd and one-pixel sizes, camera validation,
-resource ownership, supported HDR formats, switches and context restoration.
-Settings tests check every profile, bounds and non-finite inputs. Native plugin
-fixtures exercise the menu, saves and actual rendering delegate across the
-23 runtime adapters, including operation without TAA, fog or depth of field.
-Synthetic tests do not establish visual quality, frame-time cost or successful
-startup in every real game executable. In-game SSAO validation is pending.
+The native backend has passed synthetic GPU tests and executable-call-site
+inspection, and working SSAO has been reported on the development installation.
+Visual quality and performance still depend on the scene and configuration.
+SE/AE adapters have automated coverage; this does not mean every real executable
+has been tested. VR is not supported.
+
+This implementation occludes directional ambient diffuse lighting. It does not
+add a separate specular-occlusion or indirect-light transport system. Geometric
+normals come from depth rather than material normal maps. Off-screen geometry,
+transparent surfaces and a missing or incomplete depth prepass are not rebuilt.
+It is not global illumination and does not establish parity with another engine.
+
+Native TAA is optional for SSAO. Disable Skyrim's own SSAO when comparing results
+to avoid stacking two AO implementations. Compatibility with external graphics
+engines, custom material replacements and reserved-slot users is not established.
+The log reports native shader counts, bypasses, creation failures, opaque passes
+and binding conflicts. Unsupported shaders retain native lighting.
+
+Tests cover native ambient attenuation, unchanged direct lighting and emission,
+alpha, sky, secondary targets, inactive controls, context restoration, all three
+quality modes, contacts, flat and sloping planes, silhouettes, world radius,
+projection changes, invalid depth, resizes, ownership and corrupt bytecode.
+DXBC checksum tests exercise both padding paths with 128 private-data sizes.
+Native call fixtures verify delegated arguments across the SE/AE adapters.
 
 ## Technical references
 
-- [Native camera and frustum layout](https://github.com/CharmedBaryon/CommonLibSSE-NG/blob/main/include/RE/N/NiCamera.h)
-- [Practical Real-Time Strategies for Accurate Indirect Occlusion](https://research.activision.com/publications/archives/atvi-tr-16-01practical-realtime-strategies-for-accurate-indirect-occlusion)
+- [Native camera layout](https://github.com/CharmedBaryon/CommonLibSSE-NG/blob/main/include/RE/N/NiCamera.h)
+- [Shader instruction format](https://github.com/microsoft/DirectXShaderCompiler/blob/main/include/dxc/Support/d3d12TokenizedProgramFormat.hpp)
+- [Opaque-pass boundaries](https://github.com/community-shaders/skyrim-community-shaders/blob/main/src/Deferred.h)
+- [Native lighting reference](https://github.com/aers/Skyrim-SE-Shader-Tools/blob/master/old/shaders/Lighting/BSLightingShader.ps.hlsl)
 
-The shader and filtering implementation are CGE code. No external AO shader
-or runtime library is bundled.
+CGE provides its own bytecode transformation, occlusion shaders and filtering
+pipeline. No external AO shader implementation or game bytecode is bundled.

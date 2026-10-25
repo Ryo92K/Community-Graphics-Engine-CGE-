@@ -32,7 +32,7 @@ No separate CommonLib DLL, Dear ImGui package or CGE-specific font is required.
 ## Framework bridge
 
 CGE registers twenty-one pages on SKSE PostPostLoad. The SSAO page is labeled
-SSAO (BÊTA). The bridge resolves all required public exports before registering
+SSAO. The bridge resolves all required public exports before registering
 any page. Missing, old or incomplete APIs produce a log message without a
 private fallback menu. Effects can still use the INI.
 
@@ -65,16 +65,19 @@ sampling. Missing or invalid resources bypass the corresponding effect.
 
 ## Render path
 
-HDR order: beta SSAO, distance fog, depth of field, bloom with optional Lens Dirt,
-then the native tone mapper. SDR order: detail and color adjustments, 3D LUT,
-vignette and grain, motion blur, lens distortion, then the game's HUD.
+SSAO computes visibility from the depth prepass and modulates native directional
+ambient light during opaque material rendering. Its bindings end before blended
+decals and water. HDR order afterwards: distance fog, depth of field, bloom with
+optional Lens Dirt, then the native tone mapper. SDR order: detail and color
+adjustments, 3D LUT, vignette and grain, motion blur, lens distortion, then HUD.
 
-SSAO currently reconstructs normals from depth and shades the already-lit image.
-It has no ambient-only lighting access. Light Protection is a luminance heuristic;
-broad darkening remains a known beta issue. See SSAO.md for details.
+SSAO uses depth-derived geometric normals. Recognized material bytecode is
+transformed in memory; no game shaders or external AO implementation are bundled.
+Unknown signatures retain native shading. See SSAO.md for limits and testing.
 
 The five built-in visual presets keep Motion Blur settings when applied.
-Optional preset INIs are complete replacements and leave Motion Blur and SSAO off.
+Optional preset INIs are complete replacements. Motion Blur starts off; SSAO uses
+the same Balanced settings as the built-in presets.
 Warm Fantasy and Soft Focus reference the included Warm.cube asset. Other .cube
 files are loaded only from CGE's LUT directory, with path and table validation.
 
@@ -87,7 +90,7 @@ Context isolation restores native state after each effect. See PERFORMANCE.md.
 The framework fixture hosts a synthetic public API to exercise CGE.dll. The
 D3D11 relay, captures and GPU tests are development tools. None are installed
 or included in the Nexus archive. Tests use synthetic data, not game assets.
-59 automated tests pass; real executable compatibility and GPU cost still
+63 automated tests pass; real executable compatibility and GPU cost still
 require in-game checks. The reported 1.6.1170 startup crash is unconfirmed.
 
 ## References
