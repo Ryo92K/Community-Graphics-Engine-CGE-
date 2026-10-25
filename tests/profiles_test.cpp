@@ -67,5 +67,15 @@ int main() {
     fog.transitionSeconds=0;mist.Reset();
     const auto duskFog=mist.Update(fog,Environment::Exterior,0,20).fog;
     Check(Near(duskFog.density,0.8f) && Near(duskFog.startDistance,1250),"Fog density and distance blend at dusk");
+    Settings dof;dof.dof={true,2000,0.6f};dof.SetSeparateProfiles(true);dof.transitionSeconds=2;
+    dof.interior.dof={false,1000,0.5f};dof.exteriorNight.dof={true,500,1};
+    ProfileTransition lens;
+    Check(lens.Update(dof,Environment::Exterior,0,12).dof.focusDistance==2000,"Depth of field selects exterior day");
+    const auto halfDof=lens.Update(dof,Environment::Interior,1,12).dof;
+    Check(halfDof.enabled && Near(halfDof.strength,0.3f) && Near(halfDof.focusDistance,1500),"Focus and strength blend towards disabled interior");
+    Check(lens.Update(dof,Environment::Interior,1,12).dof.strength==0,"Depth of field fades to zero");
+    dof.transitionSeconds=0;lens.Reset();
+    const auto duskDof=lens.Update(dof,Environment::Exterior,0,20).dof;
+    Check(Near(duskDof.focusDistance,1250) && Near(duskDof.strength,0.8f),"Depth of field blends at dusk");
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

@@ -1,5 +1,7 @@
 #include "menu_framework.h"
 #include "graphics_host.h"
+#include "presets.h"
+#include <optional>
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
@@ -30,12 +32,14 @@ struct Api {
 Api api;
 bool registered{},dirty{};
 int selectedProfile{};
+std::optional<Settings> beforePreset;
+const char* appliedPreset{};
 enum class Feedback {None,Saved,Failed};
 Feedback feedback{};
 template<class T>bool Bind(HMODULE module,const char* name,T& target) {
     target=reinterpret_cast<T>(GetProcAddress(module,name));return target!=nullptr;
 }
-void Changed(){dirty=true;feedback=Feedback::None;}
+void Changed(){dirty=true;feedback=Feedback::None;appliedPreset=nullptr;}
 void Text(const char* text){api.text(text,nullptr);}
 bool Button(const char* label){return api.button(label,{});}
 void Control(const char* label,float& value,float low,float high,float neutral) {
@@ -60,7 +64,7 @@ void Footer(Settings& settings,bool general) {
     }
     if(general) {
         api.sameLine(0,-1);
-        if(Button("Reset All")){settings=Settings{};selectedProfile=0;graphics::ApplySettings(settings);Changed();}
+        if(Button("Reset All")){settings=Settings{};selectedProfile=0;beforePreset.reset();graphics::ApplySettings(settings);Changed();}
     }
     if(feedback==Feedback::Saved) {api.sameLine(0,-1);Text("Saved");}
     else if(feedback==Feedback::Failed){api.sameLine(0,-1);Text("Save failed: CGE.ini could not be written.");}
@@ -78,6 +82,28 @@ void Render(unsigned page) noexcept {
             Text(view.bloom.empty()?"HDR pass not reached":view.bloom.c_str());
             Text("Motion Blur");api.sameLine(0,-1);Text(MotionLabel(view.motion));
             Text("Distance Fog");api.sameLine(0,-1);Text(view.fog.empty()?"HDR pass not reached":view.fog.c_str());
+            Text("Depth of Field");api.sameLine(0,-1);Text(view.dof.empty()?"HDR pass not reached":view.dof.c_str());
+        }else if(page==7) {
+            Text("Presets replace all CGE settings. Save to keep changes.");
+            const auto choices=presets::List();
+            for(std::size_t i=0;i<choices.size();++i) {
+                if(Button(choices[i].name)) {
+                    const auto previous=settings;
+                    if(presets::Apply(i,settings)) {
+                        beforePreset=previous;selectedProfile=0;Changed();appliedPreset=choices[i].name;
+                        graphics::ApplySettings(settings,true);
+                    }
+                }
+                Text(choices[i].description);
+            }
+            api.separator();
+            api.beginDisabled(!beforePreset.has_value());
+            if(Button("Undo Preset") && beforePreset) {
+                settings=*beforePreset;beforePreset.reset();selectedProfile=0;Changed();
+                graphics::ApplySettings(settings,true);
+            }
+            api.endDisabled();
+            if(appliedPreset){Text("Applied");api.sameLine(0,-1);Text(appliedPreset);}
         }else if(page==1) {
             bool automatic=settings.separateProfiles;
             if(api.checkbox("Automatic profiles",&automatic)){settings.SetSeparateProfiles(automatic);Changed();}
@@ -119,9 +145,14 @@ void Render(unsigned page) noexcept {
                 Control("Gamma",profile->gamma,0.5f,2.5f,1);
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
-                    const auto bloom=profile->bloom;const auto fog=profile->fog;
-                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;Changed();
+                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;
+                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;Changed();
                 }
+            }else if(page==6) {
+                if(api.checkbox("Depth of field enabled",&profile->dof.enabled))Changed();
+                Control("Focus Distance (units)",profile->dof.focusDistance,1,50000,2000);
+                Control("Blur Strength",profile->dof.strength,0,1,0.5f);
+                if(Button("Reset Depth of Field")){profile->dof=DofSettings{};Changed();}
             }else if(page==5) {
                 if(api.checkbox("Fog enabled",&profile->fog.enabled))Changed();
                 Control("Density",profile->fog.density,0,1,0.35f);
@@ -137,6 +168,7 @@ void Render(unsigned page) noexcept {
             api.endDisabled();
             if(page==3 && !view.bloom.empty())Text(view.bloom.c_str());
             if(page==5 && !view.fog.empty())Text(view.fog.c_str());
+            if(page==6 && !view.dof.empty())Text(view.dof.c_str());
         }
         Footer(settings,page==0);
     }catch(...){                                                                    }
@@ -147,6 +179,8 @@ void __stdcall Color(){Render(2);}
 void __stdcall Bloom(){Render(3);}
 void __stdcall Motion(){Render(4);}
 void __stdcall Fog(){Render(5);}
+void __stdcall Dof(){Render(6);}
+void __stdcall Presets(){Render(7);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -179,13 +213,14 @@ bool Register(std::string& status) {
     }
     api=candidate;
     constexpr const char* paths[]={
-        "Community Graphics Engine/General","Community Graphics Engine/Profiles",
+        "Community Graphics Engine/General","Community Graphics Engine/Presets","Community Graphics Engine/Profiles",
         "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
-        "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Motion Blur"};
-    const Page pages[]={General,Profiles,Color,Bloom,Fog,Motion};
-    for(unsigned i=0;i<6;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
+        "Community Graphics Engine/Effects/Motion Blur"};
+    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion};
+    for(unsigned i=0;i<8;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 6 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 8 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char CgeDofSource[]=R"CGEHLSL(@CGE_DOF_SHADER@)CGEHLSL";

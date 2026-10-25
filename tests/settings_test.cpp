@@ -113,5 +113,23 @@ int wmain(int argc,wchar_t** argv) {
     {std::ofstream file(path);file<<"[Bloom]\nEnabled=true\nIntensity=0.4\n";}
     auto oldFog=Settings::Load(path);
     Check(!oldFog.fog.enabled && !oldFog.interior.fog.enabled && oldFog.bloom.enabled,"0.4 settings retain their look with fog disabled");
+    Settings dof;dof.dof={true,1500,0.75f};dof.SetSeparateProfiles(true);
+    dof.interior.dof={false,200,0.2f};dof.exteriorNight.dof={true,500,0.9f};
+    Check(dof.Save(path),"Save depth of field");
+    auto dofReload=Settings::Load(path);
+    Check(dofReload.dof==dof.dof && dofReload.interior.dof==dof.interior.dof &&
+        dofReload.exteriorNight.dof==dof.exteriorNight.dof,"Depth of field persists per profile");
+    {std::ofstream file(path);file<<"[DepthOfField]\nEnabled=true\nFocusDistance=-1\nStrength=99\n";}
+    auto boundedDof=Settings::Load(path);
+    Check(boundedDof.dof.focusDistance==1 && boundedDof.dof.strength==1,"Depth of field bounds");
+    {std::ofstream file(path);file<<"[ExteriorNight]\nDofStrength=0.8\n[ExteriorDay]\nDofFocusDistance=2500\n[DepthOfField]\nEnabled=true\n";}
+    auto inheritedDof=Settings::Load(path);
+    Check(inheritedDof.exteriorNight.dof.enabled && inheritedDof.exteriorNight.dof.focusDistance==2500 &&
+        inheritedDof.exteriorNight.dof.strength==0.8f,"Depth of field profile inheritance is section-order independent");
+    dof.interior.dof.focusDistance=std::numeric_limits<float>::quiet_NaN();
+    Check(!dof.Save(path),"Invalid depth of field cannot overwrite saved settings");
+    {std::ofstream file(path);file<<"[Fog]\nEnabled=true\nDensity=0.5\n";}
+    auto oldDof=Settings::Load(path);
+    Check(oldDof.fog.enabled && !oldDof.dof.enabled && !oldDof.interior.dof.enabled,"0.5.0 configuration keeps depth of field disabled");
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

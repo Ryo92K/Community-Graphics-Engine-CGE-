@@ -1,5 +1,6 @@
 #include "skse_api.h"
 #include "settings.h"
+#include "presets.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -179,7 +180,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?6u:0u),"Validate API before registering exactly six pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?8u:0u),"Validate API before registering exactly eight pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -244,12 +245,13 @@ int wmain(int argc,wchar_t** argv) {
         Check(bytes[0]==17 && bytes[1]==231 && bytes[2]==93 && bytes[3]==77,"HUD remains untouched");
         context->Unmap(readback.Get(),0);
     };
-    auto halo=[&] {
+    auto hdrPixel=[&](unsigned x) {
         context->CopyResource(hdrReadback.Get(),hdr.Get());D3D11_MAPPED_SUBRESOURCE map{};
         Check(SUCCEEDED(context->Map(hdrReadback.Get(),0,D3D11_MAP_READ,0,&map)),"HDR readback");
         const auto* row=reinterpret_cast<const float*>(static_cast<const unsigned char*>(map.pData)+32*map.RowPitch);
-        const float value=row[37*4];context->Unmap(hdrReadback.Get(),0);return value;
+        const float value=row[x*4];context->Unmap(hdrReadback.Get(),0);return value;
     };
+    auto halo=[&]{return hdrPixel(37);};
     auto edit=[&](const char* page,int type,const char* name,float number) {
         action(type,name,number);Check(render(page),"Registered page callback");
     };
@@ -316,6 +318,44 @@ int wmain(int argc,wchar_t** argv) {
         edit(profiles,1,"Automatic profiles",0);
         edit(fog,4,"##Profile",0);edit(fog,1,"Fog enabled",0);edit(fog,5,"Save",0);
         context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
+        const char* dof="Community Graphics Engine/Effects/Depth of Field";
+        edit(dof,4,"##Profile",0);edit(dof,1,"Depth of field enabled",1);
+        edit(dof,3,"Focus Distance (units)",-1);edit(dof,3,"Blur Strength",99);edit(dof,5,"Save",0);
+        auto savedDof=cge::Settings::Load(config);
+        Check(savedDof.dof.enabled && savedDof.dof.focusDistance==1 && savedDof.dof.strength==1,"Depth-of-field page bounds and save");
+        edit(dof,3,"Focus Distance (units)",500);edit(dof,3,"Blur Strength",0.75f);edit(dof,5,"Save",0);
+        savedDof=cge::Settings::Load(config);
+        Check(savedDof.dof.focusDistance==500 && savedDof.dof.strength==0.75f,"Manual focus and strength persist");
+        context->UpdateSubresource(depth.Get(),0,nullptr,farDepth.data(),64*4,0);
+        temporalFixture[0x18]=0;present();
+        if(sceneReady && !hdrConflict) {
+            Check(hdrPixel(32)<7,"Native depth of field blurs the HDR background without fog, TAA or motion blur");
+            edit(dof,3,"Focus Distance (units)",50000);present();Check(hdrPixel(32)==8,"Native manual focus can restore sharp HDR highlights");
+            edit(dof,3,"Focus Distance (units)",500);
+            edit(general,1,"Effects enabled",0);present();Check(hdrPixel(32)==8,"Master checkbox bypasses depth of field");
+            edit(general,1,"Effects enabled",1);
+            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+0x20a0,&invalid,sizeof(invalid));
+            present();Check(hdrPixel(32)==8,"Missing native depth safely bypasses depth of field");
+            auto* valid=depthView.Get();memcpy(rendererFixture+0x20a0,&valid,sizeof(valid));
+            float invalidNear=0;memcpy(cameraFixture+0x160,&invalidNear,4);present();
+            Check(hdrPixel(32)==8,"Invalid camera safely bypasses depth of field");
+            const float nearPlane=1;memcpy(cameraFixture+0x160,&nearPlane,4);
+            present();Check(hdrPixel(32)<7,"Depth of field recovers when native inputs return");
+        }
+        temporalFixture[0x18]=1;
+        edit(profiles,1,"Automatic profiles",1);
+        edit(dof,4,"##Profile",3);edit(dof,1,"Depth of field enabled",1);
+        edit(dof,3,"Focus Distance (units)",700);edit(dof,3,"Blur Strength",0.9f);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).exteriorNight.dof.focusDistance==700 &&
+            cge::Settings::Load(config).exteriorNight.dof.strength==0.9f,"Reset Color preserves depth of field");
+        edit(dof,5,"Reset Depth of Field",0);edit(dof,5,"Save",0);
+        Check(!cge::Settings::Load(config).exteriorNight.dof.enabled &&
+            cge::Settings::Load(config).dof.enabled,"Depth-of-field reset affects only the selected profile");
+        edit(profiles,1,"Automatic profiles",0);
+        edit(dof,4,"##Profile",0);edit(dof,1,"Depth of field enabled",0);edit(dof,5,"Save",0);
+        present();if(sceneReady && !hdrConflict)Check(hdrPixel(32)==8,"Depth-of-field toggle restores sharp native scene");
+        context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
         const char* motion="Community Graphics Engine/Effects/Motion Blur";
         edit(motion,1,"Motion blur enabled",1);edit(motion,4,"Quality",2);edit(motion,5,"Save",0);
         Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");
@@ -335,6 +375,30 @@ int wmain(int argc,wchar_t** argv) {
         Check(SUCCEEDED(D3D11CreateDeviceAndSwapChain(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,
             &desc,&chain,&device,nullptr,&context)),"Reattach renderer");
         nativeResourcesValid=false;buffers();present();pixel(sceneReady?102:204);
+        const char* presetPage="Community Graphics Engine/Presets";
+        edit(general,5,"Save",0);
+        const auto previous=cge::Settings::Load(config);
+        auto same=[](const cge::Settings& a,const cge::Settings& b) {
+            return static_cast<const cge::ColorSettings&>(a)==static_cast<const cge::ColorSettings&>(b) &&
+                a.interior==b.interior && a.exterior==b.exterior && a.exteriorNight==b.exteriorNight &&
+                a.enabled==b.enabled && a.separateProfiles==b.separateProfiles &&
+                a.profilesConfigured==b.profilesConfigured && a.motion==b.motion &&
+                a.transitionSeconds==b.transitionSeconds && a.dayHour==b.dayHour && a.nightHour==b.nightHour;
+        };
+        edit(presetPage,5,"Natural",0);
+        Check(same(cge::Settings::Load(config),previous),"Applying a preset does not silently overwrite the saved INI");
+        present();pixel(sceneReady?208:204);
+        edit(presetPage,5,"Undo Preset",0);edit(presetPage,5,"Save",0);
+        Check(same(cge::Settings::Load(config),previous),"Undo restores all settings preceding the preset");
+        const auto choices=cge::presets::List();
+        Check(choices.size()==5,"Five built-in presets");
+        for(std::size_t i=0;i<choices.size();++i) {
+            edit(presetPage,5,choices[i].name,0);edit(presetPage,5,"Save",0);
+            cge::Settings expected;Check(cge::presets::Apply(i,expected),"Valid preset index");
+            Check(same(cge::Settings::Load(config),expected),"Every preset button applies and saves all profile/effect settings");
+        }
+        auto invalidPreset=previous;
+        Check(!cge::presets::Apply(choices.size(),invalidPreset) && same(previous,invalidPreset),"Invalid preset index leaves settings unchanged");
         edit(general,5,"Reset All",0);edit(general,5,"Save",0);
         Check(cge::Settings::Load(config).Neutral() && !cge::Settings::Load(config).bloom.enabled,"Reset All saves neutral effects");
     }

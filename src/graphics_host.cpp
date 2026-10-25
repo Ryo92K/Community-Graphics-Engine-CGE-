@@ -1,6 +1,8 @@
 #include "graphics_host.h"
 #include "renderer.h"
 #include "bloom.h"
+#include "fog.h"
+#include "depth_of_field.h"
 #include "menu_framework.h"
 #include <mutex>
 #include "profiles.h"
@@ -14,6 +16,8 @@ struct Host {
     Renderer renderer;
     BloomRenderer bloom;
     FogRenderer fog;
+    DepthOfFieldRenderer dof;
+    std::string dofStatus;
     std::string fogStatus;
     std::string bloomStatus;
     bool prepared{},hdrProcessed{},changedLocation{};
@@ -28,7 +32,7 @@ struct Host {
     Environment(*probe)() noexcept{};
     float(*hourProbe)() noexcept{};
     MotionInputs(*motionProbe)() noexcept{};
-    FogInputs(*fogProbe)() noexcept{};
+    DepthInputs(*depthProbe)() noexcept{};
     MotionState motionState{MotionState::Off};
     bool motionWasEnabled{};
     MotionSettings reportedMotion;
@@ -69,6 +73,7 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
         if(host.report)host.report("CGE renderer initialization failed: "+error);
         host.renderer=Renderer{};return false;
     }
+    if(!host.dof.Initialize(device,error) && host.report)host.report("CGE depth of field initialization failed: "+error);
     if(!host.fog.Initialize(device,error) && host.report)host.report("CGE fog initialization failed: "+error);
     if(!host.bloom.Initialize(device,error) && host.report)host.report("CGE bloom initialization failed: "+error);
     DXGI_SWAP_CHAIN_DESC desc{};if(FAILED(chain->GetDesc(&desc))){host.renderer=Renderer{};return false;}
@@ -78,7 +83,7 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
 }
 void Detach(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
-    host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();
+    host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.dof=DepthOfFieldRenderer{};host.dofStatus.clear();host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();
 }
 void UpdateDimensions(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
@@ -94,8 +99,8 @@ void SetGameHourProbe(float(*probe)() noexcept) {
 void SetMotionProbe(MotionInputs(*probe)() noexcept) {
     auto& host=Data();std::lock_guard lock(host.mutex);host.motionProbe=probe;
 }
-void SetFogProbe(FogInputs(*probe)() noexcept) {
-    auto& host=Data();std::lock_guard lock(host.mutex);host.fogProbe=probe;
+void SetDepthProbe(DepthInputs(*probe)() noexcept) {
+    auto& host=Data();std::lock_guard lock(host.mutex);host.depthProbe=probe;
 }
 void HDR(ID3D11ShaderResourceView* source) noexcept {
     try {
@@ -103,18 +108,23 @@ void HDR(ID3D11ShaderResourceView* source) noexcept {
         if(!host.chain || host.hdrProcessed)return;
         host.hdrProcessed=true;Prepare(host);
         const bool active=host.settings.enabled && host.environment!=Environment::Unknown;
-        FogInputs fog;
-        if(active && host.color.fog.enabled && host.color.fog.density>0 && host.fogProbe)fog=host.fogProbe();
-        auto fogStatus=host.fog.Draw(source,fog,host.color.fog,active);
+        DepthInputs depth;
+        if(active && host.depthProbe && ((host.color.fog.enabled && host.color.fog.density>0) ||
+            (host.color.dof.enabled && host.color.dof.strength>0)))depth=host.depthProbe();
+        auto fogStatus=host.fog.Draw(source,depth,host.color.fog,active);
         if(fogStatus!=host.fogStatus) {
             host.fogStatus=fogStatus;if(host.report)host.report("CGE distance fog: "+fogStatus);
+        }
+        auto dofStatus=host.dof.Draw(source,depth,host.color.dof,active);
+        if(dofStatus!=host.dofStatus) {
+            host.dofStatus=dofStatus;if(host.report)host.report("CGE depth of field: "+dofStatus);
         }
         auto status=host.bloom.Draw(source,host.color.bloom,active);
         
         if(status!=host.bloomStatus) {
             host.bloomStatus=status;if(host.report)host.report("CGE bloom: "+status);
         }
-    }catch(const std::exception& e){auto& host=Data();if(host.report)host.report(std::string("CGE bloom skipped: ")+e.what());}
+    }catch(const std::exception& e){auto& host=Data();if(host.report)host.report(std::string("CGE HDR effects skipped: ")+e.what());}
     catch(...){}
 }
                                                                 
@@ -165,11 +175,14 @@ void Scene() noexcept {
 bool ReadSettings(SettingsView& view) {
     auto& host=Data();std::lock_guard lock(host.mutex);
     if(!host.chain)return false;
-    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus};return true;
+    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus,host.dofStatus};return true;
 }
-void ApplySettings(const Settings& settings) {
+void ApplySettings(const Settings& settings,bool resetProfiles) {
     auto& host=Data();std::lock_guard lock(host.mutex);
-    if(host.chain)host.settings=settings;
+    if(host.chain) {
+        host.settings=settings;
+        if(resetProfiles){host.transition.Reset();host.motionWarmup=2;}
+    }
 }
 bool SaveSettings() {
     auto& host=Data();std::lock_guard lock(host.mutex);

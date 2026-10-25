@@ -1,20 +1,11 @@
 #pragma once
 #include "settings.h"
+#include "depth_inputs.h"
 #include <d3d11_1.h>
 #include <wrl/client.h>
 #include <cmath>
 #include <string>
 namespace cge {
-enum class FogDataState {Unavailable,CameraUnavailable,Ready};
-struct FogInputs {
-    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> depth;
-    float nearPlane{},farPlane{};
-    FogDataState state{FogDataState::Unavailable};
-};
-inline bool ValidFogProjection(float nearPlane,float farPlane) noexcept {
-    return std::isfinite(nearPlane) && std::isfinite(farPlane) &&
-        nearPlane>0 && farPlane>nearPlane && farPlane<=1.0e8f;
-}
 class FogRenderer {
     template<class T>using Ptr=Microsoft::WRL::ComPtr<T>;
     Ptr<ID3D11Device> device_;
@@ -31,6 +22,6 @@ class FogRenderer {
     bool ready_{};
 public:
     bool Initialize(ID3D11Device*,std::string& error);
-    std::string Draw(ID3D11ShaderResourceView* scene,const FogInputs&,const FogSettings&,bool enabled);
+    std::string Draw(ID3D11ShaderResourceView* scene,const DepthInputs&,const FogSettings&,bool enabled);
 };
 }

@@ -12,10 +12,16 @@ struct FogSettings {
     float density{0.35f},startDistance{2000};
     bool operator==(const FogSettings&) const =default;
 };
+struct DofSettings {
+    bool enabled{false};
+    float focusDistance{2000},strength{0.5f};
+    bool operator==(const DofSettings&) const =default;
+};
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
     BloomSettings bloom;
     FogSettings fog;
+    DofSettings dof;
     bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0;}
     bool operator==(const ColorSettings&) const =default;
 };

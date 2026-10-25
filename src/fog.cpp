@@ -32,14 +32,14 @@ bool FogRenderer::Initialize(ID3D11Device* device,std::string& error) {
     }
     ready_=true;return true;
 }
-std::string FogRenderer::Draw(ID3D11ShaderResourceView* scene,const FogInputs& inputs,const FogSettings& settings,bool enabled) {
+std::string FogRenderer::Draw(ID3D11ShaderResourceView* scene,const DepthInputs& inputs,const FogSettings& settings,bool enabled) {
     if(!enabled || !settings.enabled || settings.density<=0) {
         sourceView_.Reset();source_.Reset();width_=height_=0;format_=DXGI_FORMAT_UNKNOWN;return "Off";
     }
     if(!std::isfinite(settings.density) || !std::isfinite(settings.startDistance))return "Invalid fog settings";
-    if(inputs.state==FogDataState::CameraUnavailable || !ValidFogProjection(inputs.nearPlane,inputs.farPlane))
+    if(inputs.state==DepthState::CameraUnavailable || !ValidDepthProjection(inputs.nearPlane,inputs.farPlane))
         return "Camera data unavailable";
-    if(!ready_ || !scene || !inputs.depth || inputs.state!=FogDataState::Ready)return "Depth data unavailable";
+    if(!ready_ || !scene || !inputs.depth || inputs.state!=DepthState::Ready)return "Depth data unavailable";
     D3D11_SHADER_RESOURCE_VIEW_DESC colorView{},depthView{};scene->GetDesc(&colorView);inputs.depth->GetDesc(&depthView);
     if(colorView.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURE2D || colorView.Texture2D.MostDetailedMip!=0 ||
         (colorView.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT && colorView.Format!=DXGI_FORMAT_R11G11B10_FLOAT &&

@@ -16,7 +16,7 @@ int main() {
     unsigned width=64,height=16;
     ComPtr<ID3D11Texture2D> scene,depth,staging;
     ComPtr<ID3D11ShaderResourceView> sceneView;ComPtr<ID3D11RenderTargetView> target;
-    FogInputs inputs;inputs.nearPlane=1;inputs.farPlane=10000;inputs.state=FogDataState::Ready;
+    DepthInputs inputs;inputs.nearPlane=1;inputs.farPlane=10000;inputs.state=DepthState::Ready;
     auto create=[&](unsigned w,unsigned h) {
         context->ClearState();width=w;height=h;scene.Reset();sceneView.Reset();depth.Reset();inputs.depth.Reset();staging.Reset();target.Reset();
         D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;

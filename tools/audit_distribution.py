@@ -93,3 +93,6 @@ assert not (project/"src/input_capture.cpp").exists()
 assert b"GetAsyncKeyState" not in data and b"DirectInput8Create" not in data
 assert b"SetWindowLongPtr" not in data and b"ImGui_Impl" not in data
 print("PASS: no local editor, renderer backend, DirectInput hook or hotkey polling.")
+
+assert (project/"LICENSE").read_bytes() in data
+print("PASS: project license is embedded in CGE.dll.")

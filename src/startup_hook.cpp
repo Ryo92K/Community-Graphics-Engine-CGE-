@@ -18,7 +18,7 @@ const void* playerSingleton{};
 const void* calendarSingleton{};
 const unsigned char* nativeRenderer{};
 const void *uiSingleton{},*imageSpaceSingleton{};
-const unsigned char* fogNativeRenderer{};
+const unsigned char* depthNativeRenderer{};
 const void* worldRootSingleton{};
 unsigned char* interfaceEntry{};
 constexpr std::array<unsigned char,15> interfacePrologue={
@@ -160,7 +160,7 @@ MotionInputs PollMotion() noexcept {
     if(!AcquireNativeView(depth,&d)){result.velocity.Reset();return result;}
     result.depth.Attach(d);result.state=MotionState::Ready;return result;
 }
-bool InitializeFog(HMODULE executable,const std::filesystem::path& library,std::string& error) {
+bool InitializeDepth(HMODULE executable,const std::filesystem::path& library,std::string& error) {
     auto* renderer=ResolveV5(executable,library,411393,0x20a8,error);
     auto* worldRoot=ResolveV5(executable,library,403513,sizeof(void*),error);
     auto* getter=ResolveV5(executable,library,36609,15,error);
@@ -171,13 +171,13 @@ bool InitializeFog(HMODULE executable,const std::filesystem::path& library,std::
     std::int32_t displacement{};memcpy(&displacement,getter+3,4);
     if(memcmp(getter,load,sizeof(load)) || memcmp(getter+7,tail,sizeof(tail)) ||
         getter+7+displacement!=worldRoot) {
-        error="World camera accessor differs; distance fog disabled";return false;
+        error="World camera accessor differs; depth effects disabled";return false;
     }
-    fogNativeRenderer=renderer;worldRootSingleton=worldRoot;return true;
+    depthNativeRenderer=renderer;worldRootSingleton=worldRoot;return true;
 }
-FogInputs PollFog() noexcept {
-    FogInputs result;
-    if(!fogNativeRenderer || !worldRootSingleton)return result;
+DepthInputs PollDepth() noexcept {
+    DepthInputs result;
+    if(!depthNativeRenderer || !worldRootSingleton)return result;
     const unsigned char *root{},*camera{},*sameRoot{},*sameCamera{};
     float planes[2]{};unsigned char orthographic{};
                                                                                   
@@ -185,17 +185,17 @@ FogInputs PollFog() noexcept {
         !ReadMemory(root+0x128,&camera,sizeof(camera)) || !camera ||
         !ReadMemory(camera+0x160,planes,sizeof(planes)) ||
         !ReadMemory(camera+0x168,&orthographic,sizeof(orthographic)) || orthographic ||
-        !ValidFogProjection(planes[0],planes[1]) ||
+        !ValidDepthProjection(planes[0],planes[1]) ||
         !ReadMemory(root+0x128,&sameCamera,sizeof(sameCamera)) || sameCamera!=camera ||
         !ReadMemory(worldRootSingleton,&sameRoot,sizeof(sameRoot)) || sameRoot!=root) {
-        result.state=FogDataState::CameraUnavailable;return result;
+        result.state=DepthState::CameraUnavailable;return result;
     }
     result.nearPlane=planes[0];result.farPlane=planes[1];
     void* raw{};
-    if(!ReadMemory(fogNativeRenderer+0x20a0,&raw,sizeof(raw)))return result;
+    if(!ReadMemory(depthNativeRenderer+0x20a0,&raw,sizeof(raw)))return result;
     ID3D11ShaderResourceView* view{};
     if(!AcquireNativeView(raw,&view))return result;
-    result.depth.Attach(view);result.state=FogDataState::Ready;return result;
+    result.depth.Attach(view);result.state=DepthState::Ready;return result;
 }
 bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& library,std::string& error) {
     auto* address=ResolveV5(executable,library,403521,sizeof(void*),error);
@@ -366,7 +366,7 @@ void Shutdown() noexcept {
             FlushInstructionCache(GetCurrentProcess(),tonemapCall,5);
         }
     }
-    fogNativeRenderer=nullptr;worldRootSingleton=nullptr;
+    depthNativeRenderer=nullptr;worldRootSingleton=nullptr;
     playerSingleton=nullptr;calendarSingleton=nullptr;nativeRenderer=nullptr;uiSingleton=imageSpaceSingleton=nullptr;
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};

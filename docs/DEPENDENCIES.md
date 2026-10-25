@@ -15,7 +15,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers six pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers eight pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -88,7 +88,7 @@ Depth clear values (sky) and invalid samples are unchanged.
 A fixed linear RGB (0.65, 0.70, 0.75) tint is used for this initial implementation.
 The pass preserves alpha and the native device-context state.
 
-The pipeline is HDR scene -> distance fog -> bloom -> native tone mapping.
+The pipeline is HDR scene -> distance fog -> depth of field -> bloom -> native tone mapping.
 Color grading and motion blur retain their existing pre-HUD boundary.
 
 Camera layout references:
@@ -96,3 +96,33 @@ https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/N/NiCamera.h
 https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/M/Main.cpp
 
 The shader, resource management, camera adapter and tests are CGE implementations.
+
+
+## Manual depth of field (0.5.1)
+
+No new external dependency is required. Fog and depth of field share the
+DepthInputs adapter in src/depth_inputs.h, with one native probe per HDR frame
+when either effect needs it.
+
+The background circle-of-confusion radius is:
+16 * strength * saturate(1 - focusDistance / viewDistance), in native output pixels.
+Pixels at or in front of the focus distance remain unchanged.
+A deterministic 32-sample disk gathers color and matching point depth. Focused
+or substantially nearer samples are rejected to protect foreground boundaries.
+The pass uses no temporal history or autofocus.
+
+The project license is embedded as the CGE_LICENSE RCDATA resource in CGE.dll.
+Nexus RAR packages contain only SKSE/ and are named Community Graphics Engine (CGE).rar.
+Source packages retain the LICENSE file and full build sources.
+
+
+## Built-in presets (0.5.1)
+
+The five preset definitions are embedded in src/presets.cpp.
+They require no additional file, library or mod. They match the optional preset
+INI files distributed separately.
+Applying a preset updates all settings and resets the displayed profile blend
+so the selected look appears on the next frame. Doorway/day/night transitions
+continue to use the preset's normal timing.
+A one-step session snapshot provides Undo Preset. Neither operation writes the
+INI until the user selects Save.
