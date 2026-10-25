@@ -7,7 +7,7 @@ blur, HDR bloom and depth-based distance fog.
 
 - Skyrim SE/AE Steam **1.7.104**
 - **SKSE 2.3.1**
-- **Address Library for SKSE Plugins**, including versionlib-1-7-104-0.bin (V5)
+- **Address Library for SKSE Plugins**
 - **[SKSE Menu Framework](https://www.nexusmods.com/skyrimspecialedition/mods/120352)**,
   version **3.14 or newer**, and its listed requirements
 
