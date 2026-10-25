@@ -54,6 +54,10 @@ int main() {
     for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x){const unsigned char v=((x+y)&1)?126:130;input[y*width+x]={v,v,v,77};}
     const auto detail=render(settings);
     for(unsigned i=0;i<input.size();++i)Check(std::abs(int(detail[i][0])-int(input[i][0]))<=1,"Fine texture extrema preserved");
+    for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x){const auto v=static_cast<unsigned char>(40+(x/8)*8);input[y*width+x]={v,v,v,77};}
+    settings.debanding={true,1,4,0.025f};const auto rejected=render(settings);
+    settings.debanding.threshold=0.05f;const auto accepted=render(settings);
+    Check(rejected==input && accepted!=input,"Adjustable threshold admits stronger bands without forcing scene blur");
     std::fill(input.begin(),input.end(),Pixel{128,128,128,77});Check(render(settings)==input,"Flat areas unchanged");
     bands();settings.debanding.strength=0;Check(settings.Neutral() && render(settings)==input,"Zero strength exact bypass");
     settings.debanding={false,1,4};Check(render(settings)==input,"Effect switch bypass");

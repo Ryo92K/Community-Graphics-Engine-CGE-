@@ -75,7 +75,32 @@ void Renderer::CaptureMotionReadback(const MotionPass& motion,float exposure) {
     context_->CopyResource(motionReadback_.Get(),texture.Get());context_->End(motionReadbackDone_.Get());
     motionReadPending_=true;--motionDiagnosticBudget_;nextMotionSample_=now+std::chrono::milliseconds(750);
 }
+bool Renderer::PrepareLut(const LutSettings& settings) {
+    if(!settings.enabled || !std::isfinite(settings.strength) || settings.strength<=0 || settings.file.empty()) {
+        lutStatus_=settings.enabled && settings.file.empty()?"LUT: no file selected":"LUT off";return false;
+    }
+    if(lutLoaded_ && lutFile_==settings.file) {
+        const auto& status=lutView_?lutActiveStatus_:lutFailure_;
+        if(lutStatus_!=status)lutStatus_=status;
+        return lutView_!=nullptr;
+    }
+    lutLoaded_=true;lutFile_=settings.file;lutView_.Reset();lutData_={};
+    std::string error;
+    auto fail=[&](std::string message){lutStatus_=lutFailure_=std::move(message);return false;};
+    if(!ValidLutName(settings.file) || lutDirectory_.empty()) return fail("LUT unavailable: invalid name or directory");
+    if(!LoadCube(lutDirectory_/settings.file,lutData_,error)) return fail("LUT "+settings.file+": "+error);
+    D3D11_TEXTURE3D_DESC d{};d.Width=d.Height=d.Depth=lutData_.size;d.MipLevels=1;
+    d.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;d.Usage=D3D11_USAGE_IMMUTABLE;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data{lutData_.values.data(),lutData_.size*16,lutData_.size*lutData_.size*16};
+    ComPtr<ID3D11Texture3D> texture;
+    if(FAILED(device_->CreateTexture3D(&d,&data,&texture)) || FAILED(device_->CreateShaderResourceView(texture.Get(),nullptr,&lutView_))) {
+        return fail("LUT "+settings.file+": GPU upload failed");
+    }
+    lutData_.values.clear();lutData_.values.shrink_to_fit();
+    lutStatus_=lutActiveStatus_="LUT active: "+settings.file;return true;
+}
 bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
+    output_.Reset();
     grainStart_=std::chrono::steady_clock::now();
     device_=device;ComPtr<ID3D11DeviceContext> context;device->GetImmediateContext(&context);
     ComPtr<ID3D11Device1> device1;
@@ -91,12 +116,13 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
         if(FAILED(result))error=errors?std::string(static_cast<const char*>(errors->GetBufferPointer()),errors->GetBufferSize()):"CGE shader compilation failed";
         return SUCCEEDED(result);
     };
-    ComPtr<ID3DBlob> vs,ps,mb;
-    if(!compile("FullscreenVertex","vs_5_0",vs) || !compile("ColorPixel","ps_5_0",ps) || !compile("MotionPixel","ps_5_0",mb))return false;
+    ComPtr<ID3DBlob> vs,ps,mb,distortion;
+    if(!compile("FullscreenVertex","vs_5_0",vs) || !compile("ColorPixel","ps_5_0",ps) || !compile("MotionPixel","ps_5_0",mb) || !compile("DistortionPixel","ps_5_0",distortion))return false;
     if(FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)) ||
-       FAILED(device->CreatePixelShader(mb->GetBufferPointer(),mb->GetBufferSize(),nullptr,&motionPixel_)))return false;
-    D3D11_BUFFER_DESC desc{};desc.ByteWidth=160;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+       FAILED(device->CreatePixelShader(mb->GetBufferPointer(),mb->GetBufferSize(),nullptr,&motionPixel_)) ||
+       FAILED(device->CreatePixelShader(distortion->GetBufferPointer(),distortion->GetBufferSize(),nullptr,&distortionPixel_)))return false;
+    D3D11_BUFFER_DESC desc{};desc.ByteWidth=256;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     if(FAILED(device->CreateBuffer(&desc,nullptr,&constants_)))return false;
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
@@ -110,7 +136,9 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     motionDiagnosticActive_=diagnosticActive;
     if(!diagnosticActive && !motionReadPending_){motionReadback_.Reset();motionReadbackDone_.Reset();}
     MotionState state=enabled && motion.settings.enabled?motion.inputs.state:MotionState::Off;
-    const bool color=enabled && !settings.Neutral();
+    const bool lutActive=enabled && PrepareLut(settings.lut);
+    auto effective=settings;effective.lensDistortion.enabled=false;if(!lutActive)effective.lut.enabled=false;
+    const bool color=enabled && !effective.Neutral();
     D3D11_TEXTURE2D_DESC desc{};buffer->GetDesc(&desc);
     auto compatible=[&](ID3D11ShaderResourceView* view,bool velocity) {
         if(!view)return false;
@@ -132,32 +160,36 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
         blur=false;state=MotionState::Unsupported;
     }
     if(motionState)*motionState=state;
-    const bool process=color || blur;
-    if(!process)return "idle";
+    const bool distortion=enabled && settings.lensDistortion.enabled && std::isfinite(settings.lensDistortion.amount) && settings.lensDistortion.amount!=0;
+    const bool process=color || blur || distortion;
+    if(!process){output_.Reset();return "idle";}
     if(!context_ || !isolated_)return "renderer unavailable";
     if(desc.SampleDesc.Count!=1 || desc.ArraySize!=1 || desc.MipLevels!=1 ||
         (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM))
         return "unsupported output; SDR UNORM single-sample required";
-    ComPtr<ID3D11RenderTargetView> target;
-    if(FAILED(device_->CreateRenderTargetView(buffer,nullptr,&target)))return "output view unavailable";
+    auto* target=output_.Get(device_.Get(),buffer,desc.Format);
+    if(!target)return "output view unavailable";
     if(process && (!source_ || width_!=desc.Width || height_!=desc.Height || format_!=desc.Format)) {
-        sourceView_.Reset();source_.Reset();gradedView_.Reset();gradedTarget_.Reset();graded_.Reset();width_=height_=0;
-        auto sourceDesc=desc;sourceDesc.Usage=D3D11_USAGE_DEFAULT;sourceDesc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        sourceTarget_.Reset();sourceView_.Reset();source_.Reset();gradedView_.Reset();gradedTarget_.Reset();graded_.Reset();width_=height_=0;
+        auto sourceDesc=desc;sourceDesc.Usage=D3D11_USAGE_DEFAULT;sourceDesc.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
         sourceDesc.CPUAccessFlags=sourceDesc.MiscFlags=0;
         if(FAILED(device_->CreateTexture2D(&sourceDesc,nullptr,&source_)) ||
             FAILED(device_->CreateShaderResourceView(source_.Get(),nullptr,&sourceView_)))return "input copy unavailable";
         width_=desc.Width;height_=desc.Height;format_=desc.Format;
     }
-    if(blur && color && !graded_) {
+    if(((blur && color) || (distortion && (blur || color))) && !graded_) {
         auto d=desc;d.Usage=D3D11_USAGE_DEFAULT;d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
         d.CPUAccessFlags=d.MiscFlags=0;
         if(FAILED(device_->CreateTexture2D(&d,nullptr,&graded_)) ||
             FAILED(device_->CreateRenderTargetView(graded_.Get(),nullptr,&gradedTarget_)) ||
             FAILED(device_->CreateShaderResourceView(graded_.Get(),nullptr,&gradedView_))) {
             graded_.Reset();gradedTarget_.Reset();gradedView_.Reset();
-            blur=false;state=MotionState::Unavailable;if(motionState)*motionState=state;
+            state=MotionState::Unavailable;if(motionState)*motionState=state;
+            return "intermediate texture unavailable";
         }
     }
+    if(distortion && blur && color && !sourceTarget_ && FAILED(device_->CreateRenderTargetView(source_.Get(),nullptr,&sourceTarget_)))
+        return "motion intermediate unavailable";
     struct Restore {
         ID3D11DeviceContext1* context;ComPtr<ID3DDeviceContextState> old;
         Restore(ID3D11DeviceContext1* c,ID3DDeviceContextState* next):context(c){context->SwapDeviceContextState(next,&old);}
@@ -165,7 +197,7 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     } restore(context_.Get(),isolated_.Get());
     context_->ClearState();
     if(process)context_->CopyResource(source_.Get(),buffer);
-    auto* output=target.Get();context_->OMSetRenderTargets(1,&output,nullptr);
+    auto* output=target;context_->OMSetRenderTargets(1,&output,nullptr);
     D3D11_VIEWPORT viewport={0,0,float(desc.Width),float(desc.Height),0,1};context_->RSSetViewports(1,&viewport);
     if(process) {
         auto bound=[](float value,float low,float high,float fallback){return std::isfinite(value)?std::clamp(value,low,high):fallback;};
@@ -175,8 +207,8 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
         struct Controls {
             float exposure,contrast,saturation,sharpen,gamma,temperature,motionScale,radius;
             UINT samples;float clarity,vibrance;UINT grainFrame;
-            float vignette[4],grain[4],split[4],shadows[4],highlights[4],aberration[4],debanding[4];
-        } parameters{settings.exposure,settings.contrast,settings.saturation,settings.sharpen,settings.gamma,
+            float vignette[4],grain[4],split[4],shadows[4],highlights[4],aberration[4],debanding[4],liftStrength[4],gammaRGB[4],gainRGB[4],lutMinimum[4],lutInverse[4],distortion[4];
+        } parameters{settings.exposure,settings.contrast,settings.saturation,settings.sharpnessEnabled?settings.sharpen:0,settings.gamma,
             settings.temperature*0.01f,blur?exposure:0,std::clamp(motion.settings.radius,1.0f,64.0f),
             static_cast<UINT>(MotionSettings::ValidSamples(motion.settings.samples)?motion.settings.samples:12),
             settings.clarity.enabled && std::isfinite(settings.clarity.strength)?std::clamp(settings.clarity.strength,0.0f,1.0f):0,
@@ -187,26 +219,47 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
             {bound(settings.splitToning.shadowRed,0,1,0.25f),bound(settings.splitToning.shadowGreen,0,1,0.4f),bound(settings.splitToning.shadowBlue,0,1,0.65f),0},
             {bound(settings.splitToning.highlightRed,0,1,1),bound(settings.splitToning.highlightGreen,0,1,0.72f),bound(settings.splitToning.highlightBlue,0,1,0.45f),0},
             {amount(settings.chromaticAberration.enabled,settings.chromaticAberration.strength),bound(settings.chromaticAberration.radius,0,1,0.5f),0,0},
-            {amount(settings.debanding.enabled,settings.debanding.strength),bound(settings.debanding.radius,1,16,4),0,0}};
-        static_assert(sizeof(Controls)==160);
+            {amount(settings.debanding.enabled,settings.debanding.strength),bound(settings.debanding.radius,1,16,4),bound(settings.debanding.threshold,0.005f,0.1f,0.025f),0},
+            {bound(settings.liftGammaGain.liftRed,-0.25f,0.25f,0),bound(settings.liftGammaGain.liftGreen,-0.25f,0.25f,0),
+                bound(settings.liftGammaGain.liftBlue,-0.25f,0.25f,0),
+                settings.liftGammaGain.Neutral()?0:amount(settings.liftGammaGain.enabled,settings.liftGammaGain.strength)},
+            {bound(settings.liftGammaGain.gammaRed,0.5f,2.5f,1),bound(settings.liftGammaGain.gammaGreen,0.5f,2.5f,1),
+                bound(settings.liftGammaGain.gammaBlue,0.5f,2.5f,1),0},
+            {bound(settings.liftGammaGain.gainRed,0,2,1),bound(settings.liftGammaGain.gainGreen,0,2,1),
+                bound(settings.liftGammaGain.gainBlue,0,2,1),0},
+            {lutData_.minimum[0],lutData_.minimum[1],lutData_.minimum[2],lutActive?amount(true,settings.lut.strength):0},
+            {1/(lutData_.maximum[0]-lutData_.minimum[0]),1/(lutData_.maximum[1]-lutData_.minimum[1]),
+                1/(lutData_.maximum[2]-lutData_.minimum[2]),static_cast<float>(lutData_.size)},
+            {distortion?bound(settings.lensDistortion.amount,-1,1,0):0,0,0,0}};
+        static_assert(sizeof(Controls)==256);
         context_->UpdateSubresource(constants_.Get(),0,nullptr,&parameters,0,0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->RSSetState(raster_.Get());context_->VSSetShader(vertex_.Get(),nullptr,0);
         auto* constants=constants_.Get();context_->PSSetConstantBuffers(0,1,&constants);
         if(color) {
-            auto* destination=blur?gradedTarget_.Get():target.Get();
+            auto* destination=(blur || distortion)?gradedTarget_.Get():target;
             context_->OMSetRenderTargets(1,&destination,nullptr);context_->PSSetShader(pixel_.Get(),nullptr,0);
-            auto* source=sourceView_.Get();context_->PSSetShaderResources(0,1,&source);context_->Draw(3,0);
+            auto* source=sourceView_.Get();context_->PSSetShaderResources(0,1,&source);
+            auto* lut=lutActive?lutView_.Get():nullptr;context_->PSSetShaderResources(3,1,&lut);context_->Draw(3,0);
+            ID3D11ShaderResourceView* noLut{};context_->PSSetShaderResources(3,1,&noLut);
             ID3D11ShaderResourceView* empty{};context_->PSSetShaderResources(0,1,&empty);
         }
         if(blur) {
-            auto* destination=target.Get();context_->OMSetRenderTargets(1,&destination,nullptr);
+            auto* destination=distortion?(color?sourceTarget_.Get():gradedTarget_.Get()):target;context_->OMSetRenderTargets(1,&destination,nullptr);
             ID3D11ShaderResourceView* inputs[]={color?gradedView_.Get():sourceView_.Get(),motion.inputs.velocity.Get(),motion.inputs.depth.Get()};
             context_->PSSetShaderResources(0,3,inputs);
             context_->PSSetShader(motionPixel_.Get(),nullptr,0);context_->Draw(3,0);
             CaptureMotionReadback(motion,exposure);
         }
+        if(distortion) {
+            ID3D11ShaderResourceView* empty[4]{};context_->PSSetShaderResources(0,4,empty);
+            context_->OMSetRenderTargets(0,nullptr,nullptr);
+            auto* destination=target;context_->OMSetRenderTargets(1,&destination,nullptr);
+            auto* source=(color!=blur)?gradedView_.Get():sourceView_.Get();context_->PSSetShaderResources(0,1,&source);
+            context_->PSSetShader(distortionPixel_.Get(),nullptr,0);context_->Draw(3,0);
+        }
     }
+    if(distortion)return blur?"native motion and lens distortion active":color?"native color and lens distortion active":"native lens distortion active";
     return blur?"native motion pass active":color?"native color pass active":"idle";
 }
 }

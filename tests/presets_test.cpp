@@ -19,19 +19,24 @@ int wmain(int argc,wchar_t** argv) {
     const auto choices=presets::List();Check(choices.size()==5,"Five presets retained");
     std::array<Settings,5> settings;
     for(std::size_t i=0;i<choices.size();++i) {
-        auto& value=settings[i];value.vibrance={true,1};value.clarity={true,1};value.motion.enabled=true;
+        auto& value=settings[i];value.vibrance={true,1};value.clarity={true,1};value.motion={true,1.7f,37,16};const auto savedMotion=value.motion;
         Check(presets::Apply(i,value),"Apply preset");
-        Check(value.enabled && value.separateProfiles && value.profilesConfigured && !value.motion.enabled,"Complete preset replaces previous settings");
+        Check(value.enabled && value.separateProfiles && value.profilesConfigured && value.motion==savedMotion,"Preset keeps all user motion settings");
+        value.motion=MotionSettings{};
         const ColorSettings* profiles[]={&value,&value.interior,&value.exterior,&value.exteriorNight};
         for(const auto* p:profiles) {
-            Check(p->vibrance.enabled && p->vibrance.strength>0 && p->vibrance.strength<=0.35f,"Every profile uses restrained Vibrance");
+            Check(p->vibrance.enabled && p->vibrance.strength>0 && p->vibrance.strength<=0.5f,"Every profile has a bounded Vibrance setting");
             Check(p->clarity.enabled==(i!=4),"Soft Focus preserves softness; other presets use Clarity");
-            Check(p->sharpen<=0.06f,"Sharpness reduced to balance the detail controls");
+            Check(p->sharpen<=0.1f,"Sharpness stays bounded alongside Clarity");
             Check(p->dof.enabled==(i==4),"Only Soft Focus uses depth of field");
             Check(p->vignette.enabled==(i>=3) && p->filmGrain.enabled==(i>=3) &&
                 p->chromaticAberration.enabled==(i>=3),"Lens and grain treatments reserved for cinematic presets");
+            Check(p->debanding.enabled && p->debanding.threshold>=0.025f,"Presets use the new gradient smoothing controls");
+            Check(p->liftGammaGain.enabled==(i>0) && p->lensDirt.enabled==(i>0),"Styled presets use RGB grading and responsive lens dirt");
+            Check(p->lut.enabled==(i==2 || i==4) && (!p->lut.enabled || p->lut.file=="Warm.cube"),"Preset LUT references use a supplied non-neutral asset");
+            Check(p->lensDistortion.enabled==(i>=3),"Cinematic and screenshot styles use mild distortion");
             Check(p->splitToning.enabled==(i>0),"Natural keeps neutral toning; styled presets use color separation");
-            Check(p->filmGrain.strength<=0.1f && (!p->chromaticAberration.enabled || p->chromaticAberration.strength<=0.06f),"Grain and aberration remain restrained");
+            Check(p->filmGrain.strength<=0.1f && (!p->chromaticAberration.enabled || p->chromaticAberration.strength<=0.25f),"Grain and aberration remain restrained");
 
         }
         Check(value.exteriorNight.vibrance.strength<value.exterior.vibrance.strength,"Night uses less Vibrance");

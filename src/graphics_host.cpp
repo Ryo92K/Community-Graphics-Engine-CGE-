@@ -2,6 +2,7 @@
 #include "renderer.h"
 #include "bloom.h"
 #include "fog.h"
+#include "ssao.h"
 #include "depth_of_field.h"
 #include "menu_framework.h"
 #include <mutex>
@@ -15,6 +16,8 @@ struct Host {
     Settings settings;
     Renderer renderer;
     BloomRenderer bloom;
+    SsaoRenderer ssao;
+    std::string ssaoStatus;
     FogRenderer fog;
     DepthOfFieldRenderer dof;
     std::string dofStatus;
@@ -26,7 +29,7 @@ struct Host {
     std::filesystem::path settingsPath;
     Reporter report;
     unsigned width{},height{};
-    std::string status;
+    std::string status,lutStatus;
     bool sceneProcessed{};
     ProfileTransition transition;
     Environment(*probe)() noexcept{};
@@ -69,10 +72,14 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
     host.transition.Reset();host.environment=Environment::Unknown;host.lastScene=std::chrono::steady_clock::now();
     host.settingsPath=directory/"CGE.ini";host.settings=Settings::Load(host.settingsPath);host.report=std::move(report);
     std::string error;
+    if(host.report)host.report("CGE startup stage: initializing SDR shaders");
     if(!host.renderer.Initialize(device,error)) {
         if(host.report)host.report("CGE renderer initialization failed: "+error);
         host.renderer=Renderer{};return false;
     }
+    host.renderer.SetLutDirectory(directory/"CGE"/"LUTs");
+    if(host.report)host.report("CGE startup stage: initializing HDR effects");
+    if(!host.ssao.Initialize(device,error) && host.report)host.report("CGE SSAO initialization failed: "+error);
     if(!host.dof.Initialize(device,error) && host.report)host.report("CGE depth of field initialization failed: "+error);
     if(!host.fog.Initialize(device,error) && host.report)host.report("CGE fog initialization failed: "+error);
     if(!host.bloom.Initialize(device,error) && host.report)host.report("CGE bloom initialization failed: "+error);
@@ -83,7 +90,10 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
 }
 void Detach(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
-    host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.dof=DepthOfFieldRenderer{};host.dofStatus.clear();host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();
+    host.ssao=SsaoRenderer{};host.ssaoStatus.clear();host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.dof=DepthOfFieldRenderer{};host.dofStatus.clear();host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();host.lutStatus.clear();
+}
+void BeforeResize(IDXGISwapChain* chain) {
+    auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain==chain)host.renderer.ReleaseOutput();
 }
 void UpdateDimensions(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
@@ -109,8 +119,19 @@ void HDR(ID3D11ShaderResourceView* source) noexcept {
         host.hdrProcessed=true;Prepare(host);
         const bool active=host.settings.enabled && host.environment!=Environment::Unknown;
         DepthInputs depth;
-        if(active && host.depthProbe && ((host.color.fog.enabled && host.color.fog.density>0) ||
+        if(active && host.depthProbe && ((host.color.ssao.enabled && host.color.ssao.strength>0) || (host.color.fog.enabled && host.color.fog.density>0) ||
             (host.color.dof.enabled && host.color.dof.strength>0)))depth=host.depthProbe();
+        auto ssaoStatus=host.ssao.Draw(source,depth,host.color.ssao,active);
+        if(ssaoStatus!=host.ssaoStatus) {
+            host.ssaoStatus=ssaoStatus;
+            if(host.report) {
+                host.report("CGE SSAO: "+ssaoStatus);
+                if(depth.state==DepthState::Ready && ssaoStatus.starts_with("HDR SSAO active"))
+                    host.report("CGE SSAO camera: near="+std::to_string(depth.nearPlane)+", far="+std::to_string(depth.farPlane)+
+                        ", left="+std::to_string(depth.left)+", right="+std::to_string(depth.right)+
+                        ", top="+std::to_string(depth.top)+", bottom="+std::to_string(depth.bottom));
+            }
+        }
         auto fogStatus=host.fog.Draw(source,depth,host.color.fog,active);
         if(fogStatus!=host.fogStatus) {
             host.fogStatus=fogStatus;if(host.report)host.report("CGE distance fog: "+fogStatus);
@@ -120,7 +141,7 @@ void HDR(ID3D11ShaderResourceView* source) noexcept {
         if(dofStatus!=host.dofStatus) {
             host.dofStatus=dofStatus;if(host.report)host.report("CGE depth of field: "+dofStatus);
         }
-        auto status=host.bloom.Draw(source,host.color.bloom,active);
+        auto status=host.bloom.Draw(source,host.color.bloom,active,host.color.lensDirt);
         
         if(status!=host.bloomStatus) {
             host.bloomStatus=status;if(host.report)host.report("CGE bloom: "+status);
@@ -163,6 +184,8 @@ void Scene() noexcept {
         ComPtr<ID3D11Texture2D> buffer;
         if(FAILED(host.chain->GetBuffer(0,IID_PPV_ARGS(&buffer))))return;
         auto status=host.renderer.Draw(buffer.Get(),color,host.settings.enabled,motion,&motion.inputs.state);
+        const auto lutStatus=host.settings.enabled && color.lut.enabled?host.renderer.LutStatus():"LUT off";
+        if(lutStatus!=host.lutStatus){host.lutStatus=lutStatus;if(host.report)host.report("CGE "+lutStatus);}
         if(status!=host.status){host.status=status;if(host.report)host.report("CGE scene rendering: "+status);}
         const auto diagnostics=host.renderer.TakeMotionDiagnostics();
         if(!diagnostics.empty() && host.report)host.report(diagnostics);
@@ -176,7 +199,7 @@ void Scene() noexcept {
 bool ReadSettings(SettingsView& view) {
     auto& host=Data();std::lock_guard lock(host.mutex);
     if(!host.chain)return false;
-    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus,host.dofStatus};return true;
+    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus,host.dofStatus,host.renderer.LutStatus(),host.ssaoStatus};return true;
 }
 void ApplySettings(const Settings& settings,bool resetProfiles) {
     auto& host=Data();std::lock_guard lock(host.mutex);
@@ -184,6 +207,12 @@ void ApplySettings(const Settings& settings,bool resetProfiles) {
         host.settings=settings;
         if(resetProfiles){host.transition.Reset();host.motionWarmup=2;}
     }
+}
+std::filesystem::path LutDirectory() {
+    auto& host=Data();std::lock_guard lock(host.mutex);return host.settingsPath.parent_path()/"CGE"/"LUTs";
+}
+void ReloadLuts() {
+    auto& host=Data();std::lock_guard lock(host.mutex);host.renderer.ReloadLut();
 }
 bool SaveSettings() {
     auto& host=Data();std::lock_guard lock(host.mutex);

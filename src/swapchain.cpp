@@ -52,6 +52,7 @@ public:
     HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* state,IDXGIOutput** output) override{return base_->GetFullscreenState(state,output);}
     HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* desc) override{return base_->GetDesc(desc);}
     HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags) override {
+        BeforeResize(base_.Get());
         const auto result=base_->ResizeBuffers(count,width,height,format,flags);
         if(SUCCEEDED(result))UpdateDimensions(base_.Get());
         return result;
@@ -87,6 +88,7 @@ public:
     HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE color) override{return v3_?v3_->SetColorSpace1(color):E_NOINTERFACE;}
     HRESULT STDMETHODCALLTYPE ResizeBuffers1(UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags,const UINT* masks,IUnknown*const* queues) override {
         if(!v3_)return E_NOINTERFACE;
+        BeforeResize(base_.Get());
         const auto result=v3_->ResizeBuffers1(count,width,height,format,flags,masks,queues);
         if(SUCCEEDED(result))UpdateDimensions(base_.Get());
         return result;

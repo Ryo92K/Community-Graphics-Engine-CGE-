@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <string>
 namespace cge {
 enum class Environment { Unknown, Exterior, Interior };
 struct BloomSettings {
@@ -53,8 +54,43 @@ struct ChromaticAberrationSettings {
 };
 struct DebandingSettings {
     bool enabled{false};
-    float strength{0.5f},radius{4};
+    float strength{0.5f},radius{4},threshold{0.025f};
     bool operator==(const DebandingSettings&) const =default;
+};
+struct LiftGammaGainSettings {
+    bool enabled{false};
+    float strength{1};
+    float liftRed{},liftGreen{},liftBlue{};
+    float gammaRed{1},gammaGreen{1},gammaBlue{1};
+    float gainRed{1},gainGreen{1},gainBlue{1};
+    bool Neutral() const noexcept {
+        return !enabled || strength<=0 || (liftRed==0 && liftGreen==0 && liftBlue==0 &&
+            gammaRed==1 && gammaGreen==1 && gammaBlue==1 && gainRed==1 && gainGreen==1 && gainBlue==1);
+    }
+    bool operator==(const LiftGammaGainSettings&) const =default;
+};
+struct LensDistortionSettings {
+    bool enabled{false};
+    float amount{0.2f};
+    bool operator==(const LensDistortionSettings&) const =default;
+};
+struct LensDirtSettings {
+    bool enabled{false};
+    float strength{0.35f},threshold{0.25f};
+    bool operator==(const LensDirtSettings&) const =default;
+};
+struct LutSettings {
+    bool enabled{false};
+    float strength{1};
+    std::string file;
+    bool operator==(const LutSettings&) const =default;
+};
+struct SsaoSettings {
+    bool enabled{false};
+    float strength{0.65f},radius{60},bias{0.05f},power{1.5f},maxDistance{8000};
+    int quality{1};
+    float lightProtection{1};
+    bool operator==(const SsaoSettings&) const =default;
 };
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
@@ -68,17 +104,23 @@ struct ColorSettings {
     SplitToningSettings splitToning;
     ChromaticAberrationSettings chromaticAberration;
     DebandingSettings debanding;
-    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0) &&
+    LiftGammaGainSettings liftGammaGain;
+    LutSettings lut;
+    LensDirtSettings lensDirt;
+    LensDistortionSettings lensDistortion;
+    bool sharpnessEnabled{true};
+    SsaoSettings ssao;
+    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && (!sharpnessEnabled || sharpen==0) && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0) &&
         (!vignette.enabled || vignette.strength<=0 || vignette.radius>=1) &&
         (!filmGrain.enabled || filmGrain.strength<=0) &&
         (!splitToning.enabled || splitToning.strength<=0) &&
         (!chromaticAberration.enabled || chromaticAberration.strength<=0 || chromaticAberration.radius>=1) &&
-        (!debanding.enabled || debanding.strength<=0);}
+        (!debanding.enabled || debanding.strength<=0) && liftGammaGain.Neutral() && (!lut.enabled || lut.strength<=0 || lut.file.empty()) && (!lensDistortion.enabled || lensDistortion.amount==0);}
     bool operator==(const ColorSettings&) const =default;
 };
 struct MotionSettings {
     bool enabled{false};
-    float strength{0.5f},radius{24};
+    float strength{1.0f},radius{24};
     int samples{12};
     bool operator==(const MotionSettings&) const =default;
     static bool ValidSamples(int value) noexcept {return value==8 || value==12 || value==16;}

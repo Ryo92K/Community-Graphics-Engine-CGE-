@@ -123,5 +123,57 @@ int main() {
         Check(dusk.dof.autofocus && Near(dusk.dof.focusSpeed,5) && Near(dusk.dof.focusRadius,0.06f),"Autofocus mode and parameters blend at dusk");
         Check(Near(dusk.debanding.strength,0.5f) && Near(dusk.debanding.radius,6),"Debanding settings blend at dusk");
     }
+    {
+        Settings grading;grading.liftGammaGain.enabled=true;grading.liftGammaGain.liftRed=0.1f;
+        grading.liftGammaGain.gammaGreen=1.2f;grading.liftGammaGain.gainBlue=0.8f;
+        grading.SetSeparateProfiles(true);grading.transitionSeconds=2;
+        grading.interior.liftGammaGain.enabled=false;ProfileTransition transition;
+        transition.Update(grading,Environment::Exterior,0,12);
+        const auto halfway=transition.Update(grading,Environment::Interior,1,12).liftGammaGain;
+        Check(halfway.enabled && Near(halfway.strength,0.5f),"Grading fades through zero at a disabled profile");
+        Check(transition.Update(grading,Environment::Interior,1,12).Neutral(),"Disabled grading transition reaches neutral");
+        grading.exteriorNight.liftGammaGain.liftRed=-0.1f;grading.exteriorNight.liftGammaGain.gammaGreen=1.8f;
+        grading.exteriorNight.liftGammaGain.gainBlue=1.2f;grading.transitionSeconds=0;transition.Reset();
+        const auto dusk=transition.Update(grading,Environment::Exterior,0,20).liftGammaGain;
+        Check(Near(dusk.liftRed,0) && Near(dusk.gammaGreen,1.5f) && Near(dusk.gainBlue,1),"Each RGB range interpolates at dusk");
+    }
+    {
+        Settings s;s.lut={true,1,"Warm.cube"};s.SetSeparateProfiles(true);s.transitionSeconds=2;
+        s.interior.lut.file="Identity.cube";ProfileTransition p;p.Update(s,Environment::Exterior,0,12);
+        const auto first=p.Update(s,Environment::Interior,0.5f,12).lut;
+        Check(first.file=="Warm.cube" && Near(first.strength,0.6875f),"Different LUTs fade out the old file");
+        const auto middle=p.Update(s,Environment::Interior,0.5f,12).lut;
+        Check(middle.strength==0 && middle.file=="Identity.cube","Different LUTs meet at neutral");
+        const auto last=p.Update(s,Environment::Interior,1,12).lut;
+        Check(last.strength==1 && last.file=="Identity.cube","LUT transition reaches the new file");
+        s.interior.lut.file="Warm.cube";s.interior.lut.enabled=false;p.Reset();p.Update(s,Environment::Exterior,0,12);
+        Check(Near(p.Update(s,Environment::Interior,1,12).lut.strength,0.5f),"Same LUT fades to a disabled profile");
+    }
+    {
+        Settings s;s.lensDirt={true,0.8f,0.2f};s.SetSeparateProfiles(true);s.transitionSeconds=2;
+        s.interior.lensDirt.enabled=false;ProfileTransition p;p.Update(s,Environment::Exterior,0,12);
+        Check(Near(p.Update(s,Environment::Interior,1,12).lensDirt.strength,0.4f),"Lens Dirt fades toward a disabled profile");
+        Check(Near(p.Update(s,Environment::Interior,1,12).lensDirt.strength,0),"Lens Dirt reaches zero at a disabled profile");
+        s.exteriorNight.lensDirt.strength=0.2f;s.exteriorNight.lensDirt.threshold=0.8f;s.transitionSeconds=0;p.Reset();
+        Check(Near(p.Update(s,Environment::Exterior,0,20).lensDirt.strength,0.5f),"Lens Dirt strength blends between day and night");
+        Check(Near(p.Update(s,Environment::Exterior,0,20).lensDirt.threshold,0.5f),"Dirt illumination threshold blends between day and night");
+    }
+    {
+        Settings s;s.lensDistortion={true,-0.8f};s.SetSeparateProfiles(true);s.transitionSeconds=2;
+        s.interior.lensDistortion.enabled=false;ProfileTransition p;p.Update(s,Environment::Exterior,0,12);
+        Check(Near(p.Update(s,Environment::Interior,1,12).lensDistortion.amount,-0.4f),"Negative distortion fades toward a disabled profile");
+        Check(Near(p.Update(s,Environment::Interior,1,12).lensDistortion.amount,0),"Disabled distortion reaches zero");
+        s.exteriorNight.lensDistortion.amount=0.8f;s.transitionSeconds=0;p.Reset();
+        Check(Near(p.Update(s,Environment::Exterior,0,20).lensDistortion.amount,0),"Opposite lens distortions blend through neutral at dusk");
+    }
+    {
+        Settings s;s.ssao={true,0.8f,80,0.05f,2,8000,2};s.SetSeparateProfiles(true);s.transitionSeconds=2;
+        s.interior.ssao.enabled=false;ProfileTransition p;p.Update(s,Environment::Exterior,0,12);
+        Check(Near(p.Update(s,Environment::Interior,1,12).ssao.strength,0.4f),"SSAO fades toward disabled profile");
+        Check(Near(p.Update(s,Environment::Interior,1,12).ssao.strength,0),"Disabled SSAO transition reaches zero");
+        s.exteriorNight.ssao={true,0.2f,40,0.15f,1,4000,0};s.transitionSeconds=0;p.Reset();
+        const auto dusk=p.Update(s,Environment::Exterior,0,20).ssao;
+        Check(Near(dusk.strength,0.5f) && Near(dusk.radius,60) && Near(dusk.power,1.5f) && dusk.quality==0,"SSAO numeric settings blend and quality stays discrete");
+    }
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

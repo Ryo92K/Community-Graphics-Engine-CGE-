@@ -1,4 +1,5 @@
 #include "startup_hook.h"
+#include "commonlib_bridge.h"
 #include "address_library.h"
 #include "prologue.h"
 #include <vector>
@@ -27,7 +28,7 @@ unsigned char* interfaceEntry{};
 std::vector<unsigned char> interfaceOriginal,interfacePatch;
 void Interface(std::int64_t manager) {
     beforeInterface();
-    drawInterface(manager);
+    commonlib::InvokeInterface(reinterpret_cast<std::uintptr_t>(drawInterface),manager);
 }
 void AbsoluteJump(unsigned char* at,const void* target) {
     at[0]=0xff;at[1]=0x25;
@@ -193,18 +194,20 @@ DepthInputs PollDepth() noexcept {
     DepthInputs result;
     if(!depthNativeRenderer || !worldRootSingleton)return result;
     const unsigned char *root{},*camera{},*sameRoot{},*sameCamera{};
-    float planes[2]{};unsigned char orthographic{};
+    float planes[6]{},verified[6]{};unsigned char orthographic{};
                                                                                   
     if(!ReadMemory(worldRootSingleton,&root,sizeof(root)) || !root ||
         !ReadMemory(root+runtime::selected.camera,&camera,sizeof(camera)) || !camera ||
-        !ReadMemory(camera+runtime::selected.frustum+0x10,planes,sizeof(planes)) ||
+        !ReadMemory(camera+runtime::selected.frustum,planes,sizeof(planes)) ||
         !ReadMemory(camera+runtime::selected.frustum+0x18,&orthographic,sizeof(orthographic)) || orthographic ||
-        !ValidDepthProjection(planes[0],planes[1]) ||
+        !ValidDepthProjection(planes[4],planes[5]) ||
+        !ReadMemory(camera+runtime::selected.frustum,verified,sizeof(verified)) || memcmp(planes,verified,sizeof(planes))!=0 ||
         !ReadMemory(root+runtime::selected.camera,&sameCamera,sizeof(sameCamera)) || sameCamera!=camera ||
         !ReadMemory(worldRootSingleton,&sameRoot,sizeof(sameRoot)) || sameRoot!=root) {
         result.state=DepthState::CameraUnavailable;return result;
     }
-    result.nearPlane=planes[0];result.farPlane=planes[1];
+    result.nearPlane=planes[4];result.farPlane=planes[5];
+    result.left=planes[0];result.right=planes[1];result.top=planes[2];result.bottom=planes[3];
     void* raw{};
     if(!ReadMemory(depthNativeRenderer+runtime::selected.depthView,&raw,sizeof(raw)))return result;
     ID3D11ShaderResourceView* view{};
@@ -310,7 +313,7 @@ void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32
             beforeTonemap(view);view->Release();
         }else beforeTonemap(nullptr);
     }else beforeTonemap(nullptr);
-    imageSpaceDraw(manager,effect,source,target,parameters);
+    commonlib::InvokeImageSpace(reinterpret_cast<std::uintptr_t>(imageSpaceDraw),manager,effect,source,target,parameters);
 }
 unsigned char* NearRelay(unsigned char* call) {
     SYSTEM_INFO info{};GetSystemInfo(&info);

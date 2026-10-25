@@ -4,6 +4,7 @@
 #include <algorithm>
 namespace cge {
 bool DepthOfFieldRenderer::Initialize(ID3D11Device* device,std::string& error) {
+    output_.Reset();
     ready_=false;device_=device;focus_={};focusInitialized_=false;focusIndex_=0;
     Ptr<ID3D11DeviceContext> context;device->GetImmediateContext(&context);Ptr<ID3D11Device1> device1;
     if(FAILED(context.As(&context_)) || FAILED(device->QueryInterface(IID_PPV_ARGS(&device1)))) {
@@ -35,6 +36,7 @@ bool DepthOfFieldRenderer::Initialize(ID3D11Device* device,std::string& error) {
 }
 std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const DepthInputs& inputs,const DofSettings& settings,bool enabled,float seconds) {
     if(!enabled || !settings.enabled || settings.strength<=0) {
+        output_.Reset();
         sourceView_.Reset();source_.Reset();width_=height_=0;format_=DXGI_FORMAT_UNKNOWN;focus_={};focusInitialized_=false;return "Off";
     }
     if(!std::isfinite(settings.strength) || !std::isfinite(settings.focusDistance) ||
@@ -67,9 +69,8 @@ std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const Dep
             FAILED(device_->CreateShaderResourceView(source_.Get(),nullptr,&sourceView_)))return "Depth-of-field allocation failed";
         width_=color.Width;height_=color.Height;format_=colorView.Format;focusInitialized_=false;
     }
-    D3D11_RENDER_TARGET_VIEW_DESC view{};view.Format=colorView.Format;view.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
-    Ptr<ID3D11RenderTargetView> output;
-    if(FAILED(device_->CreateRenderTargetView(colorTexture.Get(),&view,&output)))return "HDR output unavailable";
+    auto* output=output_.Get(device_.Get(),colorTexture.Get(),colorView.Format);
+    if(!output)return "HDR output unavailable";
     if(settings.autofocus) {
         for(auto& surface:focus_) {
             if(surface.texture && surface.view && surface.target)continue;
@@ -88,7 +89,7 @@ std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const Dep
         ~Restore(){context->ClearState();if(previous)context->SwapDeviceContextState(previous.Get(),nullptr);}
     } restore(context_.Get(),isolated_.Get());
     context_->ClearState();context_->CopyResource(source_.Get(),colorTexture.Get());
-    auto* target=output.Get();context_->OMSetRenderTargets(1,&target,nullptr);
+    auto* target=output;context_->OMSetRenderTargets(1,&target,nullptr);
     const D3D11_VIEWPORT viewport{0,0,float(color.Width),float(color.Height),0,1};context_->RSSetViewports(1,&viewport);
     struct Controls {float nearPlane,farPlane,focusDistance,strength;UINT autofocus;float seconds,speed,radius;};
     const Controls controls{inputs.nearPlane,inputs.farPlane,std::clamp(settings.focusDistance,1.0f,50000.0f),

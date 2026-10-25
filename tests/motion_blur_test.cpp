@@ -65,6 +65,9 @@ int main() {
     stripe();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)<narrowPeak && pixel(11)>0,"Strong settings produce a wider, visibly stronger blur");
     motion.settings.strength=1;motion.settings.radius=2;
+    for(unsigned y=0;y<16;++y)for(unsigned x=0;x<32;++x)z[y*32+x]=0.1f+0.025f*float(x);
+    stripe();upload();renderer.Draw(output.Get(),color,true,motion);
+    Check(pixel(16)<240 && pixel(15)>0,"Sloping surfaces blur without rejecting same-plane samples");
     for(unsigned y=0;y<16;++y)for(unsigned x=0;x<32;++x)z[y*32+x]=x==16?0.1f:0.9f;
     stripe();upload();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)==255 && pixel(15)==0,"Depth rejection prevents foreground/background bleeding");
@@ -73,6 +76,8 @@ int main() {
     stripe();upload();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)==255 && pixel(15)==0,"Camera-cut sized vectors are rejected");
     for(unsigned i=0;i<32*16;++i)vectors[i*2]=0.25f;
+    motion.settings.strength=4;motion.settings.radius=48;stripe();upload();renderer.Draw(output.Get(),color,true,motion);
+    Check(pixel(16)<240,"Extended intensity produces visible blur");motion.settings.strength=1;motion.settings.radius=2;
     motion.settings.enabled=false;stripe();upload();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)==255,"Effect toggle bypasses motion");
     motion.settings.enabled=true;stripe();renderer.Draw(output.Get(),color,false,motion);
@@ -94,6 +99,7 @@ int main() {
     motion.settings.radius=3;color=ColorSettings{};
     stripe();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)<255,"Half-float vectors drive the motion shader");
+    Check(pixel(16)<255,"Repeated velocity sampling stays active");
     const auto halfReport=renderer.TakeMotionDiagnostics();
     Check(halfReport.find("mean=8.00")!=std::string::npos && halfReport.find("mean span=6.00")!=std::string::npos,
         "Diagnostics decode native half-float motion accurately");

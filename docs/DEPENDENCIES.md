@@ -1,329 +1,100 @@
 # Dependencies and native interfaces
 
-## Build
+## Build dependencies
 
-Windows x64, MSVC C++20, the Windows SDK, CMake 3.24 or later.
-Python 3 is used by the test-only distribution audit.
-The MSVC runtime is linked statically.
-CGE uses system Direct3D 11.1, DXGI and D3DCompiler_47.
+CGE requires Windows x64, MSVC with C++23 support, the Windows SDK, CMake 3.24 or
+later and Git. Python 3 runs the test-only distribution audit. The MSVC runtime
+and CommonLibSSE-NG are linked statically.
 
-## Runtime
+Pinned sources are declared in cmake/Dependencies.cmake:
 
-A listed SE/AE executable, its matching SKSE64, and the corresponding Address Library.
-See RUNTIME_COMPATIBILITY.md for the exact adapter list and validation limits.
-SKSE Menu Framework 3.14 or newer provides the settings interface. Install the
-framework and its listed requirements separately.
+| Dependency | Commit |
+| --- | --- |
+| CommonLibSSE-NG | b93280e832f263dbef44e44cbe2936622a02f91a |
+| spdlog | 6fa36017cfd5731d617e1a934f0e5ea9c4445b13 |
+| rapidcsv | 3c8131af7596329c50380ef3f8975e45742b1d60 |
 
-## SKSE Menu Framework bridge
+Upstream URLs and license texts are recorded in THIRD-PARTY-NOTICES.txt and
+embedded in CGE.dll together with the project license. No external AO shader,
+LUT runtime or graphics mod implementation is bundled.
 
-CGE registers fifteen pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
-It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
+## Runtime dependencies
 
-src/menu_framework.cpp contains CGE's minimal declarations of the public export
-ABI. It resolves all required symbols before registering any page. Missing
-modules, incompatible API generations and incomplete exports produce a log
-message and no local fallback menu.
+Use a listed SE/AE executable, its matching SKSE64 and corresponding Address
+Library. See RUNTIME_COMPATIBILITY.md for the exact adapter list and limits.
+CGE uses the system Direct3D 11.1, DXGI and D3DCompiler_47 libraries.
+Motion Blur additionally requires native TAA and native render resolution.
 
-GetMenuFrameworkVersion reports an API generation: the inspected provider
-returns 3.8, independently of the package's release version. CGE checks the
-generation and required exports. The 3.14 package minimum is needed for the
-framework's Skyrim 1.7 support.
+SKSE Menu Framework 3.14 or newer provides the settings UI. Install it and its
+listed requirements separately in versions compatible with your executable.
+No separate CommonLib DLL, Dear ImGui package or CGE-specific font is required.
 
-Public API inspected at commit:
-1dcb70179076aae4ab626f43c5baab2735ca5877
-https://github.com/QTR-Modding/SKSE-Menu-Framework-3-API
+## Framework bridge
 
-Provider implementation:
-https://github.com/QTR-Modding/SKSE-Menu-Framework-3/blob/master/src/SKSEMenuFramework.cpp
+CGE registers twenty-one pages on SKSE PostPostLoad. The SSAO page is labeled
+SSAO (BÊTA). The bridge resolves all required public exports before registering
+any page. Missing, old or incomplete APIs produce a log message without a
+private fallback menu. Effects can still use the INI.
 
-No consumer header or framework implementation is copied into CGE.
-No Dear ImGui source, backend or font is compiled or distributed by CGE.
-The separate framework controls its own styling, rendering and input.
+The provider owns rendering, styling and input capture. CGE includes no consumer
+SDK header, provider implementation, ImGui backend, font or input hook.
 
-## Native rendering interfaces
+Public API reference: QTR-Modding/SKSE-Menu-Framework-3-API, commit
+1dcb70179076aae4ab626f43c5baab2735ca5877.
+The framework export generation and package version are checked separately.
 
-CGE selects SE or AE IDs and field layouts from the executable version.
-DrawInterfaceStart uses SE ID 79947 or AE ID 82084. Its trampoline copies only
-whole supported prologue instructions; relative or unsupported instructions and
-pre-existing branch hooks are refused. No arbitrary byte sequence is relocated.
+## Native interfaces
 
-HDR uses SE ID 99023 at +0x1EA and +0x230, or AE ID 105674 at +0x178.
-Call arguments, executable target ownership and supported target prologues are
-checked before patching. AE also validates the target against ID 105676.
-SE validates both sites before installing either. Effects modify the native HDR
-source, preserving the tone mapper and built-in bloom.
+CommonLibSSE-NG provides typed SKSE interface access and native delegates. CGE
+retains its bounded V1/V2/V5 Address Library reader and per-runtime render
+adapters. Unknown executable builds and unsupported instruction sequences are
+rejected. Linking CommonLib does not establish compatibility by itself.
 
-Environment and clock readers use bounded field copies.
-Motion resource adapters validate native d3d11.dll COM ownership, formats,
-device ownership and dimensions before use. There is no CommonLib binary or
-reference mod implementation linked into CGE.
+The interface boundary uses SE ID 79947 or AE ID 82084. Its trampoline accepts
+whole supported prologue instructions and refuses relative instructions or
+existing conflicting branches. Effects run before HUD and menu composition.
 
-References:
-https://github.com/ianpatt/skse64/blob/master/skse64/PluginAPI.h
-https://github.com/alandtse/CommonLibVR/blob/ng/include/REL/IDDB.h
-https://github.com/alandtse/CommonLibVR/blob/ng/src/REL/IDDB.cpp
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/Renderer.h
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/RenderTargetData.h
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/I/ImageSpaceManager.h
-https://github.com/community-shaders/skyrim-community-shaders/blob/main/src/Hooks.cpp
+The HDR boundary uses SE ID 99023 at +0x1EA and +0x230, or AE ID 105674 at +0x178.
+Call arguments, executable ownership and target prologues are validated before
+patching; AE also checks target ID 105676. SE validates both call sites first.
+The game's tone mapper and built-in bloom remain in the pipeline.
+
+Environment, calendar and camera readers use bounded memory copies. Native COM
+views are checked for system D3D11 ownership, device, dimensions, format and
+sampling. Missing or invalid resources bypass the corresponding effect.
+
+## Render path
+
+HDR order: beta SSAO, distance fog, depth of field, bloom with optional Lens Dirt,
+then the native tone mapper. SDR order: detail and color adjustments, 3D LUT,
+vignette and grain, motion blur, lens distortion, then the game's HUD.
+
+SSAO currently reconstructs normals from depth and shades the already-lit image.
+It has no ambient-only lighting access. Light Protection is a luminance heuristic;
+broad darkening remains a known beta issue. See SSAO.md for details.
+
+The five built-in visual presets keep Motion Blur settings when applied.
+Optional preset INIs are complete replacements and leave Motion Blur and SSAO off.
+Warm Fantasy and Soft Focus reference the included Warm.cube asset. Other .cube
+files are loaded only from CGE's LUT directory, with path and table validation.
+
+Output views are cached while their resources remain unchanged and released
+before swap-chain resizing. Combined SDR passes reuse intermediate textures.
+Context isolation restores native state after each effect. See PERFORMANCE.md.
 
 ## Test-only components
 
-The SMF fixture exports a synthetic host API to exercise the real CGE.dll,
-including delayed registration and unsupported API cases.
-The D3D11 relay is also a regression fixture.
-Neither component is installed or included in the mod archive.
+The framework fixture hosts a synthetic public API to exercise CGE.dll. The
+D3D11 relay, captures and GPU tests are development tools. None are installed
+or included in the Nexus archive. Tests use synthetic data, not game assets.
+59 automated tests pass; real executable compatibility and GPU cost still
+require in-game checks. The reported 1.6.1170 startup crash is unconfirmed.
 
+## References
 
-## Distance fog (0.5.0)
-
-No new external dependency is required. The fog pass uses native main-depth SRV
-at Renderer + 0x2040 before 1.6.1130, or +0x20A0 from 1.6.1130 onward,
-independently of the motion blur/TAA adapter.
-
-The world-root singleton is SE ID 517006 / AE ID 403513. Its camera is at +0x128.
-CGE validates WorldRootCamera (SE ID 35601 / AE ID 36609) against this access path before enabling
-the adapter. NiCamera near/far values at +0x160/+0x164 and the orthographic flag
-at +0x168 are read through bounded copies and checked for validity.
-The getter and frustum-copy offsets were checked on the installed 1.7.104 executable.
-
-Forward-Z depth is reconstructed as:
-distance = near * far / (far * (1 - depth) + near * depth).
-
-Fog opacity is 1 - exp(-max(distance - start, 0) * density / 5000).
-The distance is in game units along the camera view axis.
-Depth clear values (sky) and invalid samples are unchanged.
-A fixed linear RGB (0.65, 0.70, 0.75) tint is used for this initial implementation.
-The pass preserves alpha and the native device-context state.
-
-The pipeline is HDR scene -> distance fog -> depth of field -> bloom -> native tone mapping.
-Color grading and motion blur retain their existing pre-HUD boundary.
-
-Camera layout references:
-https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/N/NiCamera.h
-https://github.com/alandtse/CommonLibVR/blob/ng/src/RE/M/Main.cpp
-
-The shader, resource management, camera adapter and tests are CGE implementations.
-
-
-## Manual depth of field (0.5.1)
-
-No new external dependency is required. Fog and depth of field share the
-DepthInputs adapter in src/depth_inputs.h, with one native probe per HDR frame
-when either effect needs it.
-
-The background circle-of-confusion radius is:
-16 * strength * saturate(1 - focusDistance / viewDistance), in native output pixels.
-Pixels at or in front of the focus distance remain unchanged.
-A deterministic 32-sample disk gathers color and matching point depth. Focused
-or substantially nearer samples are rejected to protect foreground boundaries.
-The pass uses no temporal history or autofocus.
-
-The project license is embedded as the CGE_LICENSE RCDATA resource in CGE.dll.
-Nexus RAR packages contain only SKSE/ and are named Community Graphics Engine (CGE).rar.
-Source packages retain the LICENSE file and full build sources.
-
-
-## Built-in presets (0.5.1)
-
-The five preset definitions are embedded in src/presets.cpp.
-They require no additional file, library or mod. They match the optional preset
-INI files distributed separately.
-Applying a preset updates all settings and resets the displayed profile blend
-so the selected look appears on the next frame. Doorway/day/night transitions
-continue to use the preset's normal timing.
-A one-step session snapshot provides Undo Preset. Neither operation writes the
-INI until the user selects Save.
-
-
-## Clarity (0.5.2)
-
-Clarity runs in the existing SDR color shader at the verified boundary before
-the native interface. It uses the unmodified source luminance and a 5 by 5 tent
-kernel with luminance range weights. Sample spacing scales with render height,
-with a minimum of one pixel. At 1080p the kernel extends eight pixels each way.
-The luminance difference is limited to 0.08 and attenuated near black and white.
-The adjustment moves RGB towards black or white within the available gamut,
-preserving neutral colors and source alpha.
-
-The effect shares the color pass, source copy and context isolation. It adds no
-render target, temporal history, depth input or TAA requirement. Enabled strength
-above zero adds 24 neighboring texture reads per pixel; performance in game
-depends on the GPU and render resolution. Disabled or zero strength skips them.
-
-Clarity defaults to disabled with Strength 0.25. Shared values use [Clarity],
-Enabled and Strength; profiles use ClarityEnabled and ClarityStrength. Strength
-is restricted to 0 through 1. Missing keys retain the prior appearance. Profile
-transitions fade disabled endpoints through zero strength. Reset Color preserves
-Clarity, and Reset Clarity changes only the selected profile. The 0.6.1 built-in presets use restrained Clarity strengths; Soft Focus keeps
-Clarity disabled.
-
-GPU tests cover local contrast, strength, exact bypasses, exposure composition,
-alpha, bounded output, neutral colors, black/white edges, render-resolution
-scaling and state restoration. Settings and framework tests cover profile
-selection, numeric input, persistence, inheritance, reset isolation and the
-native scene/HUD boundary. In-game appearance and GPU timing remain to be checked.
-
-
-## Runtime adapters (0.6.0)
-
-runtime.h contains the explicit executable allowlist, versioned library filename,
-relocation IDs, render-target bounds and field offsets. Unknown builds, VR and
-classic Skyrim are refused. Matching Address Library headers are mandatory;
-CGE does not try a different version's table when its own file is missing.
-
-address_library.cpp reads V1 and V2 sparse delta encodings and the V5 dense
-table. Input length, counts, name, version, pointer width, arithmetic overflow,
-duplicate IDs and final file position are checked. The parsed table is cached
-during initialization. Game addresses must remain inside readable executable
-memory; hook targets must also belong to executable code in the game module.
-
-SKSEPlugin_Query remains exported for older SKSE64 releases. The AE metadata
-contains the explicit AE allowlist and V5 encoding flag. CGE does not read the
-optional GetPluginInfo tail of the SKSE interface or pin a particular SKSE
-package version. The installed SKSE itself must match the game executable.
-UI registration accepts the required messaging V1 prefix without reading later
-fields, and checks framework exports separately. A guard-page test verifies that
-the optional SKSE interface tail is not accessed.
-
-The project's distribution contains no Address Library tables or reference-mod
-code. Installed library checks run against read-only local files and are not
-required for the portable automated test suite.
-
-
-## Vibrance (0.6.1)
-
-Vibrance expands chroma around luminance after the global saturation control and
-before gamma in the existing SDR color pass. The boost decreases with the square
-of the remaining saturation headroom. A shared chroma scale is limited by the
-available RGB gamut, retaining chroma direction and luminance before gamma.
-Neutral grays, black, white and fully saturated colors are unchanged.
-This is a per-pixel color adjustment without skin, face or material detection.
-
-The effect adds no texture samples, render targets, native hooks or dependencies.
-Disabled or zero Strength bypasses it. Defaults are disabled and Strength 0.25.
-The valid range is 0 through 1. Shared INI values use [Vibrance], Enabled and
-Strength; profile sections use VibranceEnabled and VibranceStrength.
-Save, profile transitions, resets and preset replacement include the effect.
-Reset Color preserves it; Reset Vibrance affects only the selected profile.
-Existing configurations keep Vibrance disabled. The 0.6.1 built-in presets
-use style-specific Clarity and Vibrance values, with reduced sharpness.
-In-game appearance remains to be checked.
-
-Preset detail and color balance were retuned for 0.6.1. Natural uses light
-enhancement, Nordic adds texture definition with a restrained color boost,
-Warm Fantasy has the strongest Vibrance, Cinematic keeps it subtle, and
-Soft Focus disables Clarity and uses minimal sharpness. Night strengths are
-lower than day strengths. Existing saved settings are not changed until the
-user selects a preset; applying still requires Save for persistence.
-
-
-Effect parameter controls use nested disabled scopes after each enable checkbox.
-Disabled effects keep their slider, numeric input, reset and motion quality
-controls unavailable. The master switch disables parameter editing across
-effects, and automatic-profile timing controls are unavailable when automatic
-profiles are off. Effect switches, profile selection and Save remain outside
-the dependent parameter scope. Inactive profile scopes remain authoritative
-when nested inside enabled effects. Re-enabling restores the stored values.
-Framework tests cover blocked edits and resets, reactivation, master state,
-inactive profiles and balanced disabled scopes.
-
-
-## Finishing effects (0.6.2)
-
-Vignette, Film Grain, Split Toning and Chromatic Aberration are implemented in
-CGE.hlsl and share the existing pre-HUD color pipeline. They default to disabled.
-The CPU/HLSL control buffer is 144 bytes with explicit float4 groups.
-
-finishing_settings.h defines each numeric field, its bounds and default once.
-INI parsing, writing, finite-value validation and menu controls use this schema.
-Profile fields prefix the effect name, for example VignetteStrength or
-SplitToningShadowRed. Shared values use separate effect sections.
-All effect strengths fade through zero at disabled transition endpoints.
-Reset Color preserves these settings. Each effect reset changes only its own
-selected profile, and inactive controls remain grayed out.
-
-Vignette uses corner-normalized radial distance with pixel aspect correction.
-Radius preserves the central region and Softness controls the edge transition.
-Radius 1 or Strength 0 bypasses it. No texture reads are added.
-
-Film Grain uses an integer spatial hash and a steady-clock tick at 24 Hz.
-The same tick retains the same pattern; no temporal history texture is needed.
-Size is measured in render pixels, from 1 to 4. Strength is at most 1.
-Monochrome noise is attenuated near black and white. It follows gamma and is
-applied after motion filtering, including stationary/invalid-vector fallbacks.
-A supplied tick allows deterministic rendering tests without sleeping.
-
-Split Toning blends user-defined shadow/highlight RGB palettes around Balance.
-The tint's luminance is removed and a shared scale limits the chroma offset to
-the available gamut. Black and white are protected. It follows Vibrance and
-precedes gamma. It performs no texture reads.
-
-Chromatic Aberration offsets red and blue symmetrically along the radial axis.
-Green and source alpha remain centered. A protected central radius and squared
-edge mask restrict the displacement. Maximum extent at Strength 1 is eight
-pixels at 1080p, with a one-pixel minimum at low resolution. The shader reads
-bilinear source samples through clamped integer loads, requiring up to eight
-additional texture reads only where the effect is active. It needs no sampler,
-depth resource or new render target.
-
-The five presets retain their 0.6.1 color/detail balance. Natural leaves the four
-new treatments off. Nordic and Warm Fantasy use modest Split Toning. Cinematic
-and Soft Focus use restrained vignette, grain, toning and aberration, with lower
-strengths at night. Disabled treatments retain usable starting values for later
-activation. Soft Focus still keeps Clarity off. Optional INIs are exported
-from the same definitions and checked after reloading. Existing user settings
-are not replaced until a preset is selected and saved.
-
-49 automated tests include separate GPU checks for all four effects, grain after
-stationary and moving motion filtering, fixed-tick combinations, profile
-persistence and transitions, disabled controls, resets, native scene edges,
-HUD preservation and exact preset export/reload. In-game appearance and GPU
-timings remain to be checked.
-
-
-## Autofocus and Debanding (0.6.3)
-
-Depth of Field retains manual mode by default. Autofocus uses the already
-validated native depth input. A 1x1 GPU pass samples a 5 by 5 central grid,
-discards non-finite, invalid and sky depths, and selects the median of at least
-five valid samples. With fewer valid samples it retains the previous distance.
-The initial fallback is the manual Focus Distance, restricted to 1..50000 units.
-
-Two R32_FLOAT 1x1 surfaces hold the previous and next focus. Each update uses
-1 - exp(-deltaSeconds * FocusSpeed), with delta clamped to 0..0.1 seconds.
-There is no production CPU readback, Map, flush or synchronization query.
-The DOF shader reads the current focus surface. Resource creation is deferred
-until automatic mode is used. Disabling DOF releases focus state; manual mode,
-resize and environment transitions reset initialization as appropriate.
-FocusTexture exposes a borrowed resource for GPU regression readback only.
-
-Focus Speed ranges from 0.1 to 20, default 5. Focus Area ranges from 0 to 0.2,
-default 0.03, as a radius relative to the shorter render dimension.
-Zero area samples the center pixel; a larger median zone limits tiny outliers.
-Manual focus is grayed in Auto; speed and area are grayed in Manual.
-Autofocus, FocusSpeed and FocusRadius are saved under DepthOfField.
-Profiles use DofAutofocus, DofFocusSpeed and DofFocusRadius. Mode switches at
-the midpoint of profile blending; speed, area and manual fallback interpolate.
-Soft Focus and the other presets retain manual focus.
-
-Debanding shares the pre-HUD SDR color pass and needs no depth or TAA.
-Strength ranges from 0 to 1, default 0.5; Radius from 1 to 16 render pixels,
-default 4. It starts disabled in existing configurations and all presets.
-DebandingEnabled, DebandingStrength and DebandingRadius are its profile keys.
-
-The filter rejects local texture extrema, high-contrast neighborhoods and the
-outermost image border. Four opposing sample pairs smooth accepted low-contrast
-gradients, followed by stable sub-LSB monochrome dithering. The rejection
-threshold is 0.025 in normalized RGB. It uses at most twelve source texture reads,
-adds no render target, and skips the filter when disabled or at zero strength.
-It filters existing SDR input before grading; extreme subsequent grading can
-still create banding. This is conservative smoothing, not lost-detail recovery.
-
-The color constant buffer is now 160 bytes. The DOF buffer remains 32 bytes.
-No native hooks, external libraries or executable adapters changed.
-51 automated tests include GPU focus tracking, frame-rate-independent smoothing,
-sky/invalid input, sparse zones, tiny foreground objects, focus speed, actual
-DOF output, manual restoration, gradient intermediates, stable dither, radius,
-fine texture, hard edges, alpha, HUD, settings, profiles and disabled controls.
-In-game appearance, focus behavior and GPU cost remain to be validated.
+- https://github.com/ianpatt/skse64/blob/master/skse64/PluginAPI.h
+- https://github.com/CharmedBaryon/CommonLibSSE-NG
+- https://github.com/QTR-Modding/SKSE-Menu-Framework-3-API
+- https://github.com/QTR-Modding/SKSE-Menu-Framework-3/blob/master/src/SKSEMenuFramework.cpp
+- https://github.com/alandtse/CommonLibVR/blob/ng/include/REL/IDDB.h
+- https://github.com/community-shaders/skyrim-community-shaders/blob/main/src/Hooks.cpp

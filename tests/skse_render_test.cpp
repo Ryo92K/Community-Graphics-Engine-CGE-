@@ -107,7 +107,7 @@ alignas(8) unsigned char cameraFixture[0x188]{};
 void* worldRootSingletonFixture=worldRootFixture;
 void PrepareCameraFixture() {
     const void* camera=cameraFixture;memcpy(worldRootFixture+0x128,&camera,sizeof(camera));
-    const float planes[]={1,10000};memcpy(cameraFixture+0x160,planes,sizeof(planes));
+    const float planes[]={-1,1,0.75f,-0.75f,1,10000};memcpy(cameraFixture+0x150,planes,sizeof(planes));
     auto* code=const_cast<unsigned char*>(cameraGetterFixture);DWORD old{},ignored{};
     Check(VirtualProtect(code,15,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Camera fixture writable");
     const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&worldRootSingletonFixture)-
@@ -187,6 +187,9 @@ int wmain(int argc,wchar_t** argv) {
     const auto root=fs::absolute(argv[2])/L"SKSE"/L"Plugins"/L"CGE-\u03b3";
     fs::create_directories(root);fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
     auto config=root/"CGE.ini";
+    fs::create_directories(root/"CGE"/"LUTs");
+    fs::copy_file(fs::path(argv[1]).parent_path()/"Warm.cube",root/"CGE"/"LUTs"/"Warm.cube",fs::copy_options::overwrite_existing);
+    {std::ofstream f(root/"CGE"/"LUTs"/"Test.cube");f<<"LUT_3D_SIZE 2\n0 0 0\n0.5 0 0\n0 1 0\n0.5 1 0\n0 0 1\n0.5 0 1\n0 1 1\n0.5 1 1\n";}
     Write(config,"[Color]\nExposureStops=-1\n[Input]\nToggleKey=119\n");
     PrepareInterfaceFixture();PrepareTonemapFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
     SetCell(false);SetGameHour(12);
@@ -248,8 +251,16 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?15u:0u),"Validate API before registering exactly fifteen pages");
-    const char* shared="Community Graphics Engine/Effects/Color";
+    if(pageCount)Check(pageCount()==(frameworkReady?21u:0u),"Validate API before registering exactly twenty-one pages");
+    if(frameworkReady) {
+        const auto index=Proc<int(*)(const char*)>(framework,"TestPageIndex");
+        Check(index("Community Graphics Engine/Color/Lift Gamma Gain")==index("Community Graphics Engine/Color/Color")+1,"RGB grading follows Color");
+        Check(index("Community Graphics Engine/Effects/Lens Dirt")==index("Community Graphics Engine/Effects/Bloom")+1,"Lens Dirt follows Bloom");
+        Check(index("Community Graphics Engine/Effects/Sharpness")+1==index("Community Graphics Engine/Effects/Clarity") &&
+            index("Community Graphics Engine/Effects/Film Grain")==index("Community Graphics Engine/Effects/Clarity")+1,"Detail pages follow the requested order");
+        for(const char* path:{"Community Graphics Engine/Color/3D LUT","Community Graphics Engine/Color/Vibrance","Community Graphics Engine/Color/Split Toning","Community Graphics Engine/Color/Vignette","Community Graphics Engine/Color/Debanding"})Check(index(path)>=0,"Color effects grouped together");
+    }
+    const char* shared="Community Graphics Engine/Color/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
     HWND window=CreateWindowW(L"STATIC",L"CGE SMF test",WS_OVERLAPPEDWINDOW,0,0,128,128,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
@@ -287,7 +298,7 @@ int wmain(int argc,wchar_t** argv) {
     device->CreateTexture2D(&d,nullptr,&hdrReadback);
     std::vector<float> hdrPixels(64*64*4,0.05f);
     for(unsigned y=30;y<34;++y)for(unsigned x=30;x<34;++x)for(unsigned c=0;c<3;++c)hdrPixels[(y*64+x)*4+c]=8;
-    bool nativeResourcesValid=true,clarityPattern=false;
+    bool nativeResourcesValid=true,clarityPattern=false,aberrationPattern=false,bandingPattern=false;
     auto present=[&] {
         const float color[]={0.8f,0.4f,0.2f,0.3f};context->ClearRenderTargetView(output.Get(),color);
         if(clarityPattern) {
@@ -295,6 +306,14 @@ int wmain(int argc,wchar_t** argv) {
             for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x) {
                 const auto at=(y*64+x)*4;
                 pixels[at]=pixels[at+1]=pixels[at+2]=x>=31 && x<=32?145:120;pixels[at+3]=77;
+            }
+            context->UpdateSubresource(buffer.Get(),0,nullptr,pixels.data(),64*4,0);
+        }
+        if(aberrationPattern || bandingPattern) {
+            std::vector<unsigned char> pixels(64*64*4);
+            for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x) {
+                const auto at=(y*64+x)*4;const auto v=static_cast<unsigned char>(bandingPattern?40+(x/8)*8:(x==6 || x==57?240:30));
+                pixels[at]=pixels[at+1]=pixels[at+2]=v;pixels[at+3]=77;
             }
             context->UpdateSubresource(buffer.Get(),0,nullptr,pixels.data(),64*4,0);
         }
@@ -317,9 +336,16 @@ int wmain(int argc,wchar_t** argv) {
         context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE map{};
         Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&map)),"LDR readback");
         const auto* bytes=static_cast<unsigned char*>(map.pData);
+        if(abs(int(bytes[32*map.RowPitch+32*4])-red)>2)std::printf("Pixel: got %u, expected %d\n",unsigned(bytes[32*map.RowPitch+32*4]),red);
         Check(abs(int(bytes[32*map.RowPitch+32*4])-red)<=2,"Effects still precede native HUD");
         Check(bytes[0]==17 && bytes[1]==231 && bytes[2]==93 && bytes[3]==77,"HUD remains untouched");
         context->Unmap(readback.Get(),0);
+    };
+    auto image=[&]() {
+        context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE m{};
+        Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&m)),"Native image readback");
+        std::vector<unsigned char> result(64*64*4);for(unsigned y=0;y<64;++y)memcpy(result.data()+y*64*4,static_cast<unsigned char*>(m.pData)+y*m.RowPitch,64*4);
+        context->Unmap(readback.Get(),0);Check(result[0]==17 && result[1]==231 && result[2]==93,"Native effect test preserves HUD");return result;
     };
     auto hdrPixel=[&](unsigned x) {
         context->CopyResource(hdrReadback.Get(),hdr.Get());D3D11_MAPPED_SUBRESOURCE map{};
@@ -341,7 +367,35 @@ int wmain(int argc,wchar_t** argv) {
         edit(bloom,3,"Threshold",0.5f);
         edit(bloom,3,"Intensity",0.75f);edit(shared,5,"Save",0);
         Check(cge::Settings::Load(config).bloom.intensity==0.75f,"Framework numeric input persists");
+        const char* lensDirtPage="Community Graphics Engine/Effects/Lens Dirt";
+        present();std::vector<float> cleanHalo(64);for(unsigned x=0;x<64;++x)cleanHalo[x]=hdrPixel(x);
+        edit(lensDirtPage,1,"Lens Dirt enabled",1);edit(lensDirtPage,3,"Strength",1);edit(lensDirtPage,3,"Light Threshold",0.01f);present();pixel(204);
+        float dirtDelta=0;for(unsigned x=0;x<64;++x)dirtDelta=std::max(dirtDelta,hdrPixel(x)-cleanHalo[x]);
+        Check(hdrConflict || !sceneReady || dirtDelta>0.000001f,"Framework Lens Dirt affects native HDR bloom before HUD");
+        edit(lensDirtPage,1,"Lens Dirt enabled",0);present();
+        if(sceneReady && !hdrConflict)for(unsigned x=0;x<64;++x)Check(std::abs(hdrPixel(x)-cleanHalo[x])<0.00001f,"Dirt toggle restores original bloom");
         edit(bloom,1,"Bloom enabled",0);present();Check(halo()==0.05f,"Framework bloom switch bypasses HDR");
+        const char* ssao="Community Graphics Engine/Effects/SSAO (BÊTA)";
+        edit(ssao,1,"SSAO enabled",1);edit(ssao,3,"Strength",1);edit(ssao,3,"Radius (units)",80);
+        edit(ssao,4,"##Quality",2);edit(ssao,5,"Save",0);
+        Check(cge::Settings::Load(config).ssao.quality==2 && cge::Settings::Load(config).ssao.radius==80,"SSAO quality and controls persist");
+        if(sceneReady && !hdrConflict) {
+            auto encodeDepth=[](float z){return 10000*(z-1)/(z*9999);};
+            std::vector<float> aoDepth(64*64,encodeDepth(300));
+            for(unsigned y=0;y<64;++y)for(unsigned x=0;x<32;++x)aoDepth[y*64+x]=encodeDepth(275);
+            context->UpdateSubresource(depth.Get(),0,nullptr,aoDepth.data(),64*4,0);
+            temporalFixture[0x18]=0;present();pixel(204);
+            Check(hdrPixel(35)<0.049f && hdrPixel(15)==0.05f,"Native SSAO produces contacts without TAA, fog or DOF");
+            const float invalidSide=0;memcpy(cameraFixture+0x150,&invalidSide,4);memcpy(cameraFixture+0x154,&invalidSide,4);
+            present();Check(hdrPixel(35)==0.05f,"Invalid native frustum bypasses SSAO");
+            const float sides[]={-1,1};memcpy(cameraFixture+0x150,sides,sizeof(sides));
+            present();Check(hdrPixel(35)<0.049f,"SSAO recovers after camera projection returns");
+            data.assign(64*64,0.5f);context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
+            temporalFixture[0x18]=1;
+        }
+        edit(shared,5,"Reset Color",0);edit(ssao,5,"Save",0);
+        Check(cge::Settings::Load(config).ssao.enabled,"Reset Color preserves SSAO");
+        edit(ssao,5,"Reset SSAO",0);edit(ssao,5,"Save",0);Check(!cge::Settings::Load(config).ssao.enabled,"SSAO reset disables only this effect");
         const char* general="Community Graphics Engine/General";
         const char* profiles="Community Graphics Engine/Profiles";
         edit(profiles,1,"Automatic profiles",1);
@@ -453,7 +507,7 @@ int wmain(int argc,wchar_t** argv) {
             cge::Settings::Load(config).clarity.strength==0.65f,"Clarity reset affects only the selected profile");
         edit(profiles,1,"Automatic profiles",0);edit(clarity,4,"##Profile",0);
         edit(clarity,5,"Reset Clarity",0);edit(clarity,5,"Save",0);
-        const char* vibrance="Community Graphics Engine/Effects/Vibrance";
+        const char* vibrance="Community Graphics Engine/Color/Vibrance";
         edit(vibrance,4,"##Profile",0);edit(vibrance,1,"Vibrance enabled",1);
         edit(vibrance,3,"Strength",99);edit(vibrance,5,"Save",0);
         auto savedVibrance=cge::Settings::Load(config);
@@ -498,6 +552,7 @@ int wmain(int argc,wchar_t** argv) {
         const char* presetPage="Community Graphics Engine/Presets";
         edit(vibrance,4,"##Profile",0);edit(vibrance,1,"Vibrance enabled",1);edit(vibrance,3,"Strength",0.7f);
         edit(general,5,"Save",0);
+        edit(motion,1,"Motion blur enabled",1);edit(motion,3,"Intensity",1.7f);edit(motion,5,"Save",0);
         const auto previous=cge::Settings::Load(config);
         auto same=[](const cge::Settings& a,const cge::Settings& b) {
             return static_cast<const cge::ColorSettings&>(a)==static_cast<const cge::ColorSettings&>(b) &&
@@ -508,15 +563,18 @@ int wmain(int argc,wchar_t** argv) {
         };
         edit(presetPage,5,"Natural",0);
         Check(same(cge::Settings::Load(config),previous),"Applying a preset does not silently overwrite the saved INI");
-        present();pixel(sceneReady?208:204);
+        present();pixel(sceneReady?216:204);
+        edit(shared,3,"Contrast",1.31f);edit(shared,5,"Save",0);
+        const auto editingActive=cge::Settings::Load(config);
+        Check(!sceneReady || (editingActive.exterior.contrast==1.31f && editingActive.contrast==1.08f),"Preset editing follows the active day profile when scene state is available");
         edit(presetPage,5,"Undo Preset",0);edit(presetPage,5,"Save",0);
         Check(same(cge::Settings::Load(config),previous),"Undo restores all settings preceding the preset");
         const auto choices=cge::presets::List();
         Check(choices.size()==5,"Five built-in presets");
         for(std::size_t i=0;i<choices.size();++i) {
             edit(presetPage,5,choices[i].name,0);edit(presetPage,5,"Save",0);
-            cge::Settings expected;Check(cge::presets::Apply(i,expected),"Valid preset index");
-            Check(same(cge::Settings::Load(config),expected),"Every preset button applies and saves all profile/effect settings");
+            cge::Settings expected;expected.motion=previous.motion;Check(cge::presets::Apply(i,expected),"Valid preset index");
+            Check(same(cge::Settings::Load(config),expected),"Preset buttons preserve motion settings while replacing visual profiles");
         }
         auto invalidPreset=previous;
         Check(!cge::presets::Apply(choices.size(),invalidPreset) && same(previous,invalidPreset),"Invalid preset index leaves settings unchanged");
@@ -527,17 +585,29 @@ int wmain(int argc,wchar_t** argv) {
             const char *page,*toggle,*control,*reset;
             float(*value)(const cge::Settings&);
         };
-        const char* vignette="Community Graphics Engine/Effects/Vignette";
+        const char* vignette="Community Graphics Engine/Color/Vignette";
         const char* grain="Community Graphics Engine/Effects/Film Grain";
-        const char* split="Community Graphics Engine/Effects/Split Toning";
+        const char* split="Community Graphics Engine/Color/Split Toning";
         const char* aberration="Community Graphics Engine/Effects/Chromatic Aberration";
-        const char* debanding="Community Graphics Engine/Effects/Debanding";
+        const char* debanding="Community Graphics Engine/Color/Debanding";
+        const char* sharpness="Community Graphics Engine/Effects/Sharpness";
+        const char* distortion="Community Graphics Engine/Effects/Lens Distortion";
+        const char* dirt="Community Graphics Engine/Effects/Lens Dirt";
+        const char* lut="Community Graphics Engine/Color/3D LUT";
+        const char* lgg="Community Graphics Engine/Color/Lift Gamma Gain";
+        edit(sharpness,1,"Sharpness enabled",0);
         const DisabledCase cases[]={
+            {ssao,"SSAO enabled","Strength","Reset SSAO",[](const cge::Settings& s){return s.ssao.strength;}},
+            {sharpness,"Sharpness enabled","Sharpness","Reset Sharpness",[](const cge::Settings& s){return s.sharpen;}},
+            {distortion,"Lens Distortion enabled","Amount","Reset Lens Distortion",[](const cge::Settings& s){return s.lensDistortion.amount;}},
+            {dirt,"Lens Dirt enabled","Strength","Reset Lens Dirt",[](const cge::Settings& s){return s.lensDirt.strength;}},
+            {lut,"3D LUT enabled","Strength","Reset 3D LUT",[](const cge::Settings& s){return s.lut.strength;}},
             {bloom,"Bloom enabled","Intensity","Reset Bloom",[](const cge::Settings& s){return s.bloom.intensity;}},
             {fog,"Fog enabled","Density","Reset Fog",[](const cge::Settings& s){return s.fog.density;}},
             {dof,"Depth of field enabled","Blur Strength","Reset Depth of Field",[](const cge::Settings& s){return s.dof.strength;}},
             {clarity,"Clarity enabled","Strength","Reset Clarity",[](const cge::Settings& s){return s.clarity.strength;}},
             {vibrance,"Vibrance enabled","Strength","Reset Vibrance",[](const cge::Settings& s){return s.vibrance.strength;}},
+            {lgg,"Lift Gamma Gain enabled","Strength","Reset Lift Gamma Gain",[](const cge::Settings& s){return s.liftGammaGain.strength;}},
             {debanding,"Debanding enabled","Strength","Reset Debanding",[](const cge::Settings& s){return s.debanding.strength;}},
             {vignette,"Vignette enabled","Strength","Reset Vignette",[](const cge::Settings& s){return s.vignette.strength;}},
             {grain,"Film Grain enabled","Strength","Reset Film Grain",[](const cge::Settings& s){return s.filmGrain.strength;}},
@@ -568,6 +638,54 @@ int wmain(int argc,wchar_t** argv) {
             Check(item.value(cge::Settings::Load(config))==0.4f,"Reactivated control accepts edits");
             edit(item.page,1,item.toggle,0);
         }
+        aberrationPattern=true;present();const auto noAberration=image();
+        edit(aberration,1,"Chromatic Aberration enabled",1);edit(aberration,3,"Strength",1);edit(aberration,3,"Center Radius",0.1f);present();const auto withAberration=image();
+        Check(sceneReady?withAberration!=noAberration:withAberration==noAberration,"Native aberration visibly shifts edge channels only through the verified hook");
+        edit(aberration,5,"Reset Chromatic Aberration",0);aberrationPattern=false;
+        bandingPattern=true;present();const auto noDebanding=image();
+        edit(debanding,1,"Debanding enabled",1);edit(debanding,3,"Strength",1);edit(debanding,3,"Radius (px)",4);edit(debanding,3,"Threshold",0.05f);present();const auto withDebanding=image();
+        Check(sceneReady?withDebanding!=noDebanding:withDebanding==noDebanding,"Native debanding smooths eligible gradients through the verified hook");
+        edit(debanding,5,"Reset Debanding",0);bandingPattern=false;
+        edit(sharpness,1,"Sharpness enabled",1);edit(sharpness,3,"Sharpness",0.5f);edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).sharpen==0.5f && cge::Settings::Load(config).sharpnessEnabled,"Reset Color preserves the separate sharpness effect");
+        edit(sharpness,5,"Reset Sharpness",0);edit(sharpness,1,"Sharpness enabled",0);
+        edit(debanding,1,"Debanding enabled",1);edit(debanding,3,"Threshold",0.05f);edit(debanding,5,"Save",0);
+        Check(cge::Settings::Load(config).debanding.threshold==0.05f,"Debanding threshold can be edited and saved");
+        edit(debanding,5,"Reset Debanding",0);
+        edit(distortion,1,"Lens Distortion enabled",1);edit(distortion,3,"Amount",-0.75f);present();pixel(204);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).lensDistortion.enabled && cge::Settings::Load(config).lensDistortion.amount==-0.75f,"Reset Color retains signed distortion settings");
+        edit(distortion,3,"Amount",99);edit(distortion,5,"Save",0);
+        Check(cge::Settings::Load(config).lensDistortion.amount==1,"Distortion numeric input clamps positive values");
+        edit(distortion,3,"Amount",-99);edit(distortion,5,"Save",0);
+        Check(cge::Settings::Load(config).lensDistortion.amount==-1,"Distortion numeric input clamps negative values");
+        edit(distortion,5,"Reset Lens Distortion",0);edit(distortion,5,"Save",0);
+        Check(!cge::Settings::Load(config).lensDistortion.enabled && cge::Settings::Load(config).lensDistortion.amount==0.2f,"Distortion reset is independent");
+        edit(dirt,1,"Lens Dirt enabled",1);edit(dirt,3,"Strength",0.75f);edit(dirt,3,"Light Threshold",0.6f);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).lensDirt.enabled && cge::Settings::Load(config).lensDirt.strength==0.75f && cge::Settings::Load(config).lensDirt.threshold==0.6f,"Reset Color retains Lens Dirt");
+        edit(dirt,5,"Reset Lens Dirt",0);edit(dirt,5,"Save",0);
+        Check(!cge::Settings::Load(config).lensDirt.enabled && cge::Settings::Load(config).lensDirt.strength==0.35f,"Lens Dirt reset is independent");
+        edit(lut,1,"3D LUT enabled",1);edit(lut,3,"Strength",1);
+        edit(lut,4,"##LUT File",1);edit(lut,5,"Save",0);
+        Check(cge::Settings::Load(config).lut.file=="Test.cube","Select external LUT from framework");
+        present();pixel(sceneReady?102:204);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).lut.file=="Test.cube" && cge::Settings::Load(config).lut.enabled,"Reset Color preserves LUT");
+        edit(lut,5,"Reload LUTs",0);present();pixel(sceneReady?102:204);
+        edit(lut,5,"Reset 3D LUT",0);edit(lut,5,"Save",0);
+        Check(cge::Settings::Load(config).lut.file.empty() && !cge::Settings::Load(config).lut.enabled,"Independent LUT reset");
+        edit(lgg,1,"Lift Gamma Gain enabled",1);edit(lgg,3,"Strength",1);edit(lgg,3,"Gain Red",0.5f);
+        present();pixel(sceneReady?102:204);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).liftGammaGain.enabled && cge::Settings::Load(config).liftGammaGain.gainRed==0.5f,
+            "Reset Color preserves separate RGB grading");
+        edit(lgg,3,"Lift Blue",99);edit(lgg,3,"Gamma Green",-1);edit(lgg,3,"Gain Blue",99);edit(lgg,5,"Save",0);
+        const auto graded=cge::Settings::Load(config).liftGammaGain;
+        Check(graded.liftBlue==0.25f && graded.gammaGreen==0.5f && graded.gainBlue==2,"RGB grading numeric fields clamp correctly");
+        edit(lgg,5,"Reset Lift Gamma Gain",0);edit(lgg,5,"Save",0);
+        Check(!cge::Settings::Load(config).liftGammaGain.enabled &&
+            cge::Settings::Load(config).liftGammaGain.Neutral(),"RGB grading reset restores neutral values");
         edit(vignette,1,"Vignette enabled",1);edit(vignette,3,"Strength",1);present();pixel(204);
         context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE edgeMap{};
         Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&edgeMap)),"Native vignette edge readback");
@@ -620,6 +738,8 @@ int wmain(int argc,wchar_t** argv) {
     Check(GetWindowLongPtrW(window,GWLP_WNDPROC)==originalWindowProc,"Window input handling remains unchanged");
     DestroyWindow(window);
     std::ifstream log(root/"CGE.log");std::string logged((std::istreambuf_iterator<char>(log)),{});
+    Check(logged.find("CommonLibSSE-NG bridge ready")!=std::string::npos,"Official CommonLib interface bridge used by the production plugin");
+    Check(logged.find("CGE startup stage: scene hook")!=std::string::npos && logged.find("CGE startup stage: HDR hook")!=std::string::npos,"Startup stages identify the last completed native initialization");
     if(missing)Check(logged.find("install SKSE Menu Framework")!=std::string::npos,"Missing framework diagnosis");
     if(old)Check(logged.find("3 API required")!=std::string::npos,"Old framework diagnosis");
     if(incomplete)Check(logged.find("exports are incomplete")!=std::string::npos,"Incomplete API diagnosis");

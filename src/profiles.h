@@ -26,7 +26,7 @@ class ProfileTransition {
     static ColorSettings Mix(const ColorSettings& a,const ColorSettings& b,float t) noexcept {
         auto mix=[t](float x,float y){return x+(y-x)*t;};
         return {mix(a.exposure,b.exposure),mix(a.contrast,b.contrast),
-            mix(a.saturation,b.saturation),mix(a.sharpen,b.sharpen),
+            mix(a.saturation,b.saturation),mix(a.sharpnessEnabled?a.sharpen:0,b.sharpnessEnabled?b.sharpen:0),
             mix(a.gamma,b.gamma),mix(a.temperature,b.temperature),
             {a.bloom.enabled || b.bloom.enabled,
                 mix(a.bloom.enabled?a.bloom.intensity:0,b.bloom.enabled?b.bloom.intensity:0),
@@ -54,7 +54,32 @@ class ProfileTransition {
                 mix(a.chromaticAberration.radius,b.chromaticAberration.radius)},
             {a.debanding.enabled || b.debanding.enabled,
                 mix(a.debanding.enabled?a.debanding.strength:0,b.debanding.enabled?b.debanding.strength:0),
-                mix(a.debanding.radius,b.debanding.radius)}};
+                mix(a.debanding.radius,b.debanding.radius),mix(a.debanding.threshold,b.debanding.threshold)},
+            {a.liftGammaGain.enabled || b.liftGammaGain.enabled,
+                mix(a.liftGammaGain.enabled?a.liftGammaGain.strength:0,b.liftGammaGain.enabled?b.liftGammaGain.strength:0),
+                mix(a.liftGammaGain.liftRed,b.liftGammaGain.liftRed),
+                mix(a.liftGammaGain.liftGreen,b.liftGammaGain.liftGreen),
+                mix(a.liftGammaGain.liftBlue,b.liftGammaGain.liftBlue),
+                mix(a.liftGammaGain.gammaRed,b.liftGammaGain.gammaRed),
+                mix(a.liftGammaGain.gammaGreen,b.liftGammaGain.gammaGreen),
+                mix(a.liftGammaGain.gammaBlue,b.liftGammaGain.gammaBlue),
+                mix(a.liftGammaGain.gainRed,b.liftGammaGain.gainRed),
+                mix(a.liftGammaGain.gainGreen,b.liftGammaGain.gainGreen),
+                mix(a.liftGammaGain.gainBlue,b.liftGammaGain.gainBlue)},
+            {a.lut.enabled || b.lut.enabled,
+                a.lut.file==b.lut.file?mix(a.lut.enabled?a.lut.strength:0,b.lut.enabled?b.lut.strength:0):
+                    t<0.5f?(a.lut.enabled?a.lut.strength:0)*(1-2*t):(b.lut.enabled?b.lut.strength:0)*(2*t-1),
+                t<0.5f?a.lut.file:b.lut.file},
+            {a.lensDirt.enabled || b.lensDirt.enabled,
+                mix(a.lensDirt.enabled?a.lensDirt.strength:0,b.lensDirt.enabled?b.lensDirt.strength:0),
+                mix(a.lensDirt.threshold,b.lensDirt.threshold)},
+            {a.lensDistortion.enabled || b.lensDistortion.enabled,
+                mix(a.lensDistortion.enabled?a.lensDistortion.amount:0,b.lensDistortion.enabled?b.lensDistortion.amount:0)},
+            a.sharpnessEnabled || b.sharpnessEnabled,
+            {a.ssao.enabled || b.ssao.enabled,
+                mix(a.ssao.enabled?a.ssao.strength:0,b.ssao.enabled?b.ssao.strength:0),
+                mix(a.ssao.radius,b.ssao.radius),mix(a.ssao.bias,b.ssao.bias),mix(a.ssao.power,b.ssao.power),
+                mix(a.ssao.maxDistance,b.ssao.maxDistance),t<0.5f?a.ssao.quality:b.ssao.quality,mix(a.ssao.lightProtection,b.ssao.lightProtection)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

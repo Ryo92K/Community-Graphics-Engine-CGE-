@@ -74,7 +74,7 @@ int wmain(int argc,wchar_t** argv) {
     Check(motionReload.motion.enabled && motionReload.motion.strength==1.25f && motionReload.motion.radius==37 && motionReload.motion.samples==16,"Motion blur settings persist across reloads");
     {std::ofstream file(path);file<<"[MotionBlur]\nEnabled=true\nStrength=99\nMaxRadius=-5\nSamples=17\n";}
     auto motionBounds=Settings::Load(path);
-    Check(motionBounds.motion.enabled && motionBounds.motion.strength==2 && motionBounds.motion.radius==1 && motionBounds.motion.samples==12,"Motion bounds and invalid quality are handled");
+    Check(motionBounds.motion.enabled && motionBounds.motion.strength==4 && motionBounds.motion.radius==1 && motionBounds.motion.samples==12,"Motion bounds and invalid quality are handled");
     motion.motion.strength=std::numeric_limits<float>::quiet_NaN();
     Check(!motion.Save(path),"Invalid motion values cannot overwrite settings");
     {std::ofstream file(path);file<<"[Color]\nGamma=1.2\n";}
@@ -195,8 +195,8 @@ int wmain(int argc,wchar_t** argv) {
         {
             std::ofstream file(path);
             FinishingEffects(finishing,[&](const char* effect,bool){file<<"["<<effect<<"]\nEnabled=true\n";
-                FinishingParameters(finishing,[&](const char* group,const char* key,auto,auto,auto,auto,auto) {
-                    if(std::string_view(group)==effect)file<<key<<"=999\n";
+                FinishingParameters(finishing,[&](const char* group,const char* key,auto,auto,auto,float high,auto) {
+                    if(std::string_view(group)==effect)file<<key<<"="<<(high+999)<<"\n";
                 });
             });
         }
@@ -214,7 +214,7 @@ int wmain(int argc,wchar_t** argv) {
         }
         {std::ofstream file(path);file<<"[Color]\nSaturation=1.2\n";}
         const auto old=Settings::Load(path);
-        FinishingEffects(old,[](auto,bool enabled){Check(!enabled,"Older configurations keep all four new effects disabled");});
+        FinishingEffects(old,[](const char* effect,bool enabled){Check(std::string_view(effect)=="Sharpness"?enabled:!enabled,"Older configurations retain sharpness compatibility while optional effects stay disabled");});
     }
     {
         Settings autofocus;autofocus.dof={true,2500,0.6f,true,7,0.08f};autofocus.SetSeparateProfiles(true);
@@ -232,6 +232,74 @@ int wmain(int argc,wchar_t** argv) {
         autofocus.dof.focusSpeed=std::numeric_limits<float>::quiet_NaN();Check(!autofocus.Save(path),"Non-finite autofocus cannot save");
         {std::ofstream f(path);f<<"[DepthOfField]\nFocusDistance=1500\n";}
         Check(!Settings::Load(path).dof.autofocus && !Settings::Load(path).debanding.enabled,"Old configuration keeps manual focus and debanding off");
+    }
+    {
+        Settings grading;grading.liftGammaGain.enabled=true;grading.liftGammaGain.liftRed=0.08f;
+        grading.liftGammaGain.gammaGreen=1.3f;grading.liftGammaGain.gainBlue=0.8f;grading.SetSeparateProfiles(true);
+        grading.interior.liftGammaGain.enabled=false;grading.exteriorNight.liftGammaGain.strength=0.4f;
+        Check(grading.Save(path),"Save RGB grading");
+        const auto loaded=Settings::Load(path);
+        Check(loaded==grading && loaded.interior==grading.interior && loaded.exterior==grading.exterior &&
+            loaded.exteriorNight==grading.exteriorNight,"All RGB grading fields persist for every profile");
+        {std::ofstream f(path);f<<"[ExteriorNight]\nLiftGammaGainGammaBlue=1.4\n[LiftGammaGain]\nEnabled=true\nLiftRed=0.05\n";}
+        const auto inherited=Settings::Load(path);
+        Check(inherited.exteriorNight.liftGammaGain.enabled && inherited.exteriorNight.liftGammaGain.gammaBlue==1.4f &&
+            inherited.exteriorNight.liftGammaGain.liftRed==0.05f,"LGG inheritance ignores section order");
+        {std::ofstream f(path);f<<"[Color]\nGamma=1.1\n";}
+        Check(!Settings::Load(path).liftGammaGain.enabled,"Old settings keep new grading disabled");
+    }
+    {
+        Settings lut;lut.lut={true,0.7f,"Warm.cube"};lut.SetSeparateProfiles(true);
+        lut.interior.lut.file="Identity.cube";lut.exteriorNight.lut.strength=0.2f;
+        Check(lut.Save(path),"Save LUT settings");const auto loadedLut=Settings::Load(path);
+        Check(loadedLut.lut==lut.lut && loadedLut.interior.lut==lut.interior.lut && loadedLut.exterior.lut==lut.exterior.lut && loadedLut.exteriorNight.lut==lut.exteriorNight.lut,"LUT settings roundtrip in every profile");
+        lut.lut.file="../escape.cube";Check(!lut.Save(path),"Reject unsafe LUT names on save");
+        {std::ofstream f(path);f<<"[Interior]\nLUTFile=Identity.cube\n[LUT]\nFile=Warm.cube\nEnabled=true\nStrength=0.6\n";}
+        const auto inherited=Settings::Load(path);
+        Check(inherited.lut.file=="Warm.cube" && inherited.interior.lut.file=="Identity.cube" && inherited.interior.lut.enabled && inherited.exterior.lut.file=="Warm.cube","LUT section order and inherited profile defaults");
+        {std::ofstream f(path);f<<"[LUT]\nFile=../escape.cube\n";}
+        Check(Settings::Load(path).lut.file.empty(),"Ignore unsafe LUT paths on load");
+    }
+    {
+        Settings dirt;dirt.lensDirt={true,0.7f};dirt.SetSeparateProfiles(true);
+        dirt.interior.lensDirt.enabled=false;dirt.exteriorNight.lensDirt.strength=0.2f;
+        Check(dirt.Save(path),"Save Lens Dirt settings");const auto loadedDirt=Settings::Load(path);
+        Check(loadedDirt.lensDirt==dirt.lensDirt && loadedDirt.interior.lensDirt==dirt.interior.lensDirt && loadedDirt.exterior.lensDirt==dirt.exterior.lensDirt && loadedDirt.exteriorNight.lensDirt==dirt.exteriorNight.lensDirt,"Lens Dirt roundtrip in every profile");
+        {std::ofstream f(path);f<<"[Interior]\nLensDirtStrength=0.25\n[LensDirt]\nEnabled=true\nStrength=0.6\n";}
+        const auto inherited=Settings::Load(path);
+        Check(inherited.interior.lensDirt.enabled && inherited.interior.lensDirt.strength==0.25f && inherited.exterior.lensDirt.strength==0.6f,"Lens Dirt inherits shared settings regardless of section order");
+        {std::ofstream f(path);f<<"[Bloom]\nEnabled=true\n";}
+        Check(!Settings::Load(path).lensDirt.enabled,"Older INIs leave Lens Dirt disabled");
+    }
+    {
+        Settings s;s.lensDistortion={true,-0.6f};s.SetSeparateProfiles(true);
+        s.interior.lensDistortion.enabled=false;s.exteriorNight.lensDistortion.amount=0.8f;
+        Check(s.Save(path),"Save Lens Distortion");const auto loaded=Settings::Load(path);
+        Check(loaded.lensDistortion==s.lensDistortion && loaded.interior.lensDistortion==s.interior.lensDistortion && loaded.exteriorNight.lensDistortion==s.exteriorNight.lensDistortion,"Distortion saves signed values per profile");
+        {std::ofstream f(path);f<<"[Interior]\nLensDistortionAmount=-0.4\n[LensDistortion]\nEnabled=true\nAmount=99\n";}
+        const auto inherited=Settings::Load(path);Check(inherited.lensDistortion.amount==1 && inherited.interior.lensDistortion.amount==-0.4f && inherited.interior.lensDistortion.enabled,"Distortion bounds and section-independent inheritance");
+        Settings neutral;neutral.lensDistortion.enabled=true;neutral.lensDistortion.amount=0;Check(neutral.Neutral(),"Zero distortion is neutral");
+    }
+    {
+        {std::ofstream f(path);f<<"[Detail]\nSharpen=0.5\n";}
+        auto legacy=Settings::Load(path);Check(legacy.sharpnessEnabled && legacy.sharpen==0.5f,"Old sharpness settings remain active");
+        legacy.sharpnessEnabled=false;legacy.SetSeparateProfiles(true);legacy.interior.sharpnessEnabled=true;legacy.debanding.threshold=0.05f;
+        Check(legacy.Save(path),"Save independent sharpness switch and debanding threshold");const auto restored=Settings::Load(path);
+        Check(!restored.sharpnessEnabled && restored.sharpen==0.5f && restored.interior.sharpnessEnabled && restored.debanding.threshold==0.05f,"New detail controls persist without discarding saved strength");
+    }
+    {
+        Settings s;s.ssao={true,0.8f,95,0.1f,2,5000,2};s.ssao.lightProtection=0.35f;s.SetSeparateProfiles(true);
+        s.interior.ssao.lightProtection=0.5f;s.exteriorNight.ssao.lightProtection=0;
+        s.interior.ssao.enabled=false;s.exterior.ssao.quality=0;s.exteriorNight.ssao.strength=0.3f;
+        Check(s.Save(path),"Save SSAO settings");const auto loaded=Settings::Load(path);
+        Check(loaded.ssao==s.ssao && loaded.interior.ssao==s.interior.ssao && loaded.exterior.ssao==s.exterior.ssao && loaded.exteriorNight.ssao==s.exteriorNight.ssao,"SSAO fields roundtrip in every profile");
+        s.ssao.radius=std::numeric_limits<float>::quiet_NaN();Check(!s.Save(path),"Reject non-finite SSAO settings");
+        s.ssao.radius=60;s.ssao.quality=3;Check(!s.Save(path),"Reject invalid SSAO quality on save");
+        {std::ofstream f(path);f<<"[Interior]\nSSAOQuality=0\nSSAORadius=85\n[SSAO]\nEnabled=true\nRadius=9999\nQuality=2\nBias=-1\n";}
+        const auto bounded=Settings::Load(path);
+        Check(bounded.ssao.radius==250 && bounded.ssao.bias==0.01f && bounded.ssao.quality==2 && bounded.interior.ssao.radius==85 && bounded.interior.ssao.quality==0 && bounded.interior.ssao.enabled,"SSAO bounds and section-independent inheritance");
+        {std::ofstream f(path);f<<"[SSAO]\nQuality=1.5\nStrength=nan\n";}
+        Check(Settings::Load(path).ssao==cge::SsaoSettings{},"Invalid SSAO values retain safe disabled defaults");
     }
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

@@ -21,7 +21,32 @@ cbuffer CgeColorControls : register(b0) {
     float4 CgeHighlights;
     float4 CgeAberration;
     float4 CgeDebanding;
+    float4 CgeLiftStrength;
+    float4 CgeGammaRGB;
+    float4 CgeGainRGB;
+    float4 CgeLutMinimum;
+    float4 CgeLutInverse;
+    float4 CgeDistortion;
 };
+Texture3D<float4> CgeLut : register(t3);
+float3 ApplyLut(float3 color) {
+    float3 p=saturate((color-CgeLutMinimum.xyz)*CgeLutInverse.xyz)*(CgeLutInverse.w-1);
+    int3 base=min(int3(floor(p)),int3(CgeLutInverse.www)-2);
+    float3 f=p-base;
+    int3 first,second;float a,b,c;
+    if(f.x>=f.y) {
+        if(f.y>=f.z){first=int3(1,0,0);second=int3(1,1,0);a=f.x;b=f.y;c=f.z;}
+        else if(f.x>=f.z){first=int3(1,0,0);second=int3(1,0,1);a=f.x;b=f.z;c=f.y;}
+        else{first=int3(0,0,1);second=int3(1,0,1);a=f.z;b=f.x;c=f.y;}
+    }else {
+        if(f.x>=f.z){first=int3(0,1,0);second=int3(1,1,0);a=f.y;b=f.x;c=f.z;}
+        else if(f.y>=f.z){first=int3(0,1,0);second=int3(0,1,1);a=f.y;b=f.z;c=f.x;}
+        else{first=int3(0,0,1);second=int3(0,1,1);a=f.z;b=f.y;c=f.x;}
+    }
+    float3 result=(1-a)*CgeLut.Load(int4(base,0)).rgb+(a-b)*CgeLut.Load(int4(base+first,0)).rgb+
+        (b-c)*CgeLut.Load(int4(base+second,0)).rgb+c*CgeLut.Load(int4(base+int3(1,1,1),0)).rgb;
+    return lerp(color,saturate(result),CgeLutMinimum.w);
+}
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
     return float4(corner*float2(2,-2)+float2(-1,1),0,1);
@@ -44,7 +69,7 @@ float3 DebandSource(float3 center,int2 pixel,int2 size) {
         float3 a=ReadNeighbor(pixel+directions[i],size),b=ReadNeighbor(pixel-directions[i],size);
         float3 da=a-center,db=b-center;
         float difference=max(max(abs(da.r),max(abs(da.g),abs(da.b))),max(abs(db.r),max(abs(db.g),abs(db.b))));
-        if(difference>0.025)return center;
+        if(difference>CgeDebanding.z)return center;
         maxDifference=max(maxDifference,difference);
         if(dot(da,db)>0.00001)continue;
         sum+=a+b;weight+=2;
@@ -105,7 +130,7 @@ float3 AberratedSource(float3 color,float2 position,int2 size) {
     float radial=RadialDistance(position,size);
     float mask=saturate((radial-CgeAberration.y)/max(0.001,1.0-CgeAberration.y));
     float2 axis=position-float2(size)*0.5;
-    float2 shift=axis/max(length(axis),1.0)*mask*mask*CgeAberration.x*max(1.0,float(size.y)*8.0/1080.0);
+    float2 shift=axis/max(length(axis),1.0)*mask*mask*CgeAberration.x*max(1.0,float(size.y)*16.0/1080.0);
     if(mask>0) {
         color.r=BilinearSource(position+shift,size).r;
         color.b=BilinearSource(position-shift,size).b;
@@ -158,6 +183,12 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     if(CgeVibrance>0)color=ApplyVibrance(saturate(color));
     if(CgeSplit.x>0)color=ApplySplitToning(saturate(color));
     color=pow(saturate(color),1.0/CgeGamma);
+    [branch]if(CgeLiftStrength.w>0) {
+        float3 lifted=saturate(color+CgeLiftStrength.rgb*(1.0-color));
+        float3 graded=saturate(pow(lifted,1.0/CgeGammaRGB.rgb)*CgeGainRGB.rgb);
+        color=lerp(color,graded,CgeLiftStrength.w);
+    }
+    [branch]if(CgeLutMinimum.w>0)color=ApplyLut(color);
     if(CgeVignette.x>0 && CgeVignette.y<1) {
         float edge=smoothstep(CgeVignette.y,max(CgeVignette.y+0.001,min(1.0,CgeVignette.y+CgeVignette.z)),RadialDistance(position.xy,size));
         color*=1.0-CgeVignette.x*edge;
@@ -170,6 +201,11 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
                                                                    
 Texture2D<float2> CgeVelocity : register(t1);
 Texture2D<float> CgeDepth : register(t2);
+float DepthSlope(float previous,float center,float next) {
+    if(!isfinite(previous) || !isfinite(next) || previous<0 || previous>1 || next<0 || next>1)return 0;
+    float a=center-previous,b=next-center;
+    return a*b>0?(abs(a)<abs(b)?a:b):0;
+}
 float4 MotionPixel(float4 position : SV_Position) : SV_Target {
     uint width,height;CgeInput.GetDimensions(width,height);
     int2 pixel=int2(position.xy),size=int2(width,height);
@@ -183,6 +219,9 @@ float4 MotionPixel(float4 position : SV_Position) : SV_Target {
     float z=CgeDepth.Load(int3(pixel,0));
     if(!isfinite(z) || z<0 || z>1)return FinishMotion(center,pixel);
                                                                                      
+    float2 slope=float2(
+        DepthSlope(CgeDepth.Load(int3(max(pixel-int2(1,0),0),0)),z,CgeDepth.Load(int3(min(pixel+int2(1,0),size-1),0))),
+        DepthSlope(CgeDepth.Load(int3(max(pixel-int2(0,1),0),0)),z,CgeDepth.Load(int3(min(pixel+int2(0,1),size-1),0))));
     float edgeTolerance=max(0.000001,0.05*max(1.0-z,0.000001));
     float3 sum=center.rgb;float weight=1;
     uint taps=clamp(CgeMotionSamples,8u,16u);
@@ -190,10 +229,26 @@ float4 MotionPixel(float4 position : SV_Position) : SV_Target {
         float t=(float(i)+0.5)/float(taps)-0.5;
         float2 samplePixel=clamp(float2(pixel)+0.5+extent*t,0.5,float2(size)-0.5);
         float sampleZ=CgeDepth.Load(int3(int2(samplePixel),0));
-        if(!isfinite(sampleZ) || abs(sampleZ-z)>edgeTolerance)continue;
+        float expectedZ=z+dot(slope,float2(int2(samplePixel)-pixel));
+        if(!isfinite(sampleZ) || sampleZ<0 || sampleZ>1 || abs(sampleZ-expectedZ)>edgeTolerance)continue;
         float w=1.0-abs(t);
         sum+=CgeInput.Load(int3(int2(samplePixel),0)).rgb*w;
         weight+=w;
     }
     return FinishMotion(float4(sum/weight,center.a),pixel);
+}
+
+float4 DistortionPixel(float4 position : SV_Position) : SV_Target {
+    uint width,height;CgeInput.GetDimensions(width,height);
+    int2 size=int2(width,height);
+    float2 dimensions=float2(width,height);
+    float2 p=position.xy/dimensions*2-1;
+    float radius=dot(p*dimensions,p*dimensions)/dot(dimensions,dimensions);
+    float coefficient=CgeDistortion.x*0.25;
+    float scale=(1+coefficient*radius)/max(1.0,1+coefficient);
+    float2 location=(p*scale*0.5+0.5)*dimensions-0.5;
+    int2 base=int2(floor(location));float2 weight=frac(location);
+    float3 top=lerp(ReadNeighbor(base,size),ReadNeighbor(base+int2(1,0),size),weight.x);
+    float3 bottom=lerp(ReadNeighbor(base+int2(0,1),size),ReadNeighbor(base+int2(1,1),size),weight.x);
+    return float4(lerp(top,bottom,weight.y),CgeInput.Load(int3(int2(position.xy),0)).a);
 }

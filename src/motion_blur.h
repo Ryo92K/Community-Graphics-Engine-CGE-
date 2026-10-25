@@ -29,6 +29,6 @@ struct MotionPass {
 inline float MotionExposure(float strength,float seconds) noexcept {
     if(!std::isfinite(strength)||!std::isfinite(seconds)||seconds<=0 || seconds>0.1f)return 0;
                                                                                       
-    return std::clamp(strength,0.0f,2.0f)/(60.0f*std::max(seconds,1.0f/240.0f));
+    return std::clamp(strength,0.0f,4.0f)/(60.0f*std::max(seconds,1.0f/240.0f));
 }
 }

@@ -3,6 +3,8 @@
 #include <d3dcompiler.h>
 #include <algorithm>
 #include <cmath>
+#include <vector>
+#include <cstdint>
 namespace cge {
 bool BloomRenderer::CreateSurface(Surface& result,unsigned width,unsigned height,DXGI_FORMAT format,bool target) {
     result={};result.width=width;result.height=height;
@@ -23,8 +25,40 @@ bool BloomRenderer::Resize(unsigned width,unsigned height,DXGI_FORMAT format) {
     }
     sourceFormat_=format;return true;
 }
+bool BloomRenderer::CreateDirtMask() {
+    if(dirtMask_)return true;
+    constexpr unsigned size=512;
+    std::vector<float> mask(size*size,0);
+    std::uint32_t seed=0x43474531u;
+    auto random=[&](){seed=1664525u*seed+1013904223u;return float(seed>>8)*(1.0f/16777216.0f);};
+    for(unsigned spot=0;spot<112;++spot) {
+        const float x=random()*size,y=random()*size;
+        const float radius=(spot<24?0.035f+random()*0.075f:0.003f+random()*0.025f)*size;
+        const float weight=0.3f+random()*0.65f;
+        const int left=std::max(0,static_cast<int>(std::floor(x-radius)));
+        const int top=std::max(0,static_cast<int>(std::floor(y-radius)));
+        const int right=std::min(int(size)-1,static_cast<int>(std::ceil(x+radius)));
+        const int bottom=std::min(int(size)-1,static_cast<int>(std::ceil(y+radius)));
+        for(int row=top;row<=bottom;++row)for(int col=left;col<=right;++col) {
+            const float dx=(col+0.5f-x)/radius,dy=(row+0.5f-y)/radius;
+            const float distance=std::sqrt(dx*dx+dy*dy);if(distance>=1)continue;
+            const float soft=1-distance*distance;
+            const float ring=std::exp(-std::pow((distance-0.68f)*8,2.0f));
+            const float value=weight*soft*soft*(0.32f+0.68f*ring);
+            auto& pixel=mask[std::size_t(row)*size+col];pixel=1-(1-pixel)*(1-value);
+        }
+    }
+    std::vector<unsigned char> bytes(mask.size());
+    for(std::size_t i=0;i<mask.size();++i)bytes[i]=static_cast<unsigned char>(std::clamp(mask[i],0.0f,1.0f)*255+0.5f);
+    D3D11_TEXTURE2D_DESC d{};d.Width=d.Height=size;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
+    d.Format=DXGI_FORMAT_R8_UNORM;d.Usage=D3D11_USAGE_IMMUTABLE;d.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data{bytes.data(),size,0};Ptr<ID3D11Texture2D> texture;
+    return SUCCEEDED(device_->CreateTexture2D(&d,&data,&texture)) &&
+        SUCCEEDED(device_->CreateShaderResourceView(texture.Get(),nullptr,&dirtMask_));
+}
 bool BloomRenderer::Initialize(ID3D11Device* device,std::string& error) {
-    ready_=false;device_=device;
+    output_.Reset();
+    ready_=false;device_=device;dirtMask_.Reset();
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;device->GetImmediateContext(&context);
     Microsoft::WRL::ComPtr<ID3D11Device1> device1;
     if(FAILED(context.As(&context_)) || FAILED(device->QueryInterface(IID_PPV_ARGS(&device1)))) {
@@ -63,8 +97,9 @@ bool BloomRenderer::Initialize(ID3D11Device* device,std::string& error) {
     }
     ready_=true;return true;
 }
-std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSettings& settings,bool enabled) {
+std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSettings& settings,bool enabled,const LensDirtSettings& dirt) {
     if(!enabled || !settings.enabled || settings.intensity<=0) {
+        output_.Reset();
         source_={};down_={};up_={};sourceFormat_=DXGI_FORMAT_UNKNOWN;return "Off";
     }
     if(!std::isfinite(settings.intensity)||!std::isfinite(settings.threshold)||!std::isfinite(settings.radius))return "Invalid settings";
@@ -83,9 +118,10 @@ std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSetti
     if(!source_.texture || source_.width!=desc.Width || source_.height!=desc.Height || sourceFormat_!=view.Format) {
         if(!Resize(desc.Width,desc.Height,view.Format))return "Bloom allocation failed";
     }
-    D3D11_RENDER_TARGET_VIEW_DESC output{};output.Format=view.Format;output.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
-    Ptr<ID3D11RenderTargetView> target;
-    if(FAILED(device_->CreateRenderTargetView(texture.Get(),&output,&target)))return "HDR output unavailable";
+    const bool useDirt=dirt.enabled && std::isfinite(dirt.strength) && std::isfinite(dirt.threshold) && dirt.strength>0;
+    const bool dirtReady=useDirt && CreateDirtMask();
+    auto* target=output_.Get(device_.Get(),texture.Get(),view.Format);
+    if(!target)return "HDR output unavailable";
     struct Restore {
         ID3D11DeviceContext1* context;Ptr<ID3DDeviceContextState> previous;
         Restore(ID3D11DeviceContext1* c,ID3DDeviceContextState* state):context(c){c->SwapDeviceContextState(state,&previous);}
@@ -98,21 +134,22 @@ std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSetti
     auto* constants=constants_.Get();context_->PSSetConstantBuffers(0,1,&constants);
     auto pass=[&](ID3D11RenderTargetView* destination,unsigned width,unsigned height,
         ID3D11PixelShader* shader,ID3D11ShaderResourceView* a,ID3D11ShaderResourceView* b,float blend) {
-        ID3D11ShaderResourceView* empty[2]{};context_->PSSetShaderResources(0,2,empty);
+        ID3D11ShaderResourceView* empty[4]{};context_->PSSetShaderResources(0,4,empty);
         context_->OMSetRenderTargets(1,&destination,nullptr);
         const D3D11_VIEWPORT viewport{0,0,float(width),float(height),0,1};context_->RSSetViewports(1,&viewport);
-        struct Controls {float size[2],threshold,intensity,blend,padding[3];};
+        struct Controls {float size[2],threshold,intensity,blend,dirtStrength,dirtThreshold,padding;};
         const Controls controls{{float(width),float(height)},std::clamp(settings.threshold,0.0f,1.0f),
-            std::clamp(settings.intensity,0.0f,2.0f),blend,{}};
+            std::clamp(settings.intensity,0.0f,2.0f),blend,dirtReady?std::clamp(dirt.strength,0.0f,1.0f):0,
+            std::isfinite(dirt.threshold)?std::clamp(dirt.threshold,0.01f,8.0f):0.25f,0};
         static_assert(sizeof(Controls)==32);
         context_->UpdateSubresource(constants_.Get(),0,nullptr,&controls,0,0);
-        ID3D11ShaderResourceView* inputs[]={a,b};context_->PSSetShaderResources(0,2,inputs);
+        ID3D11ShaderResourceView* inputs[]={a,b,dirtReady?dirtMask_.Get():nullptr,dirtReady && shader==composite_.Get()?down_[5].view.Get():nullptr};context_->PSSetShaderResources(0,4,inputs);
         context_->PSSetShader(shader,nullptr,0);context_->Draw(3,0);
     };
     pass(down_[0].target.Get(),down_[0].width,down_[0].height,bright_.Get(),source_.view.Get(),nullptr,0);
     const float spread=std::clamp(std::log2(std::clamp(settings.radius,1.0f,64.0f))*(5.0f/6.0f),0.0f,5.0f);
     const unsigned levels=std::min(6u,1u+static_cast<unsigned>(std::ceil(spread)));
-    for(unsigned i=1;i<levels;++i)
+    for(unsigned i=1;i<(dirtReady?6u:levels);++i)
         pass(down_[i].target.Get(),down_[i].width,down_[i].height,downsample_.Get(),down_[i-1].view.Get(),nullptr,0);
     auto* blurred=down_[levels-1].view.Get();
     for(unsigned i=levels-1;i>0;--i) {
@@ -120,7 +157,7 @@ std::string BloomRenderer::Draw(ID3D11ShaderResourceView* input,const BloomSetti
         pass(up_[i-1].target.Get(),up_[i-1].width,up_[i-1].height,upsample_.Get(),blurred,down_[i-1].view.Get(),weight);
         blurred=up_[i-1].view.Get();
     }
-    pass(target.Get(),desc.Width,desc.Height,composite_.Get(),blurred,source_.view.Get(),0);
-    return "HDR bloom active";
+    pass(target,desc.Width,desc.Height,composite_.Get(),blurred,source_.view.Get(),0);
+    return useDirt?(dirtReady?"HDR bloom and lens dirt active":"HDR bloom active; lens dirt allocation failed"):"HDR bloom active";
 }
 }

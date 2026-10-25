@@ -96,3 +96,6 @@ print("PASS: no local editor, renderer backend, DirectInput hook or hotkey polli
 
 assert (project/"LICENSE").read_bytes() in data
 print("PASS: project license is embedded in CGE.dll.")
+
+assert (project/"THIRD-PARTY-NOTICES.txt").read_bytes() in data
+print("PASS: third-party license notices are embedded in CGE.dll.")

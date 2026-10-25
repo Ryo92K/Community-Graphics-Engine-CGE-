@@ -48,6 +48,10 @@ __declspec(dllexport) void igEndDisabled(){if(disabledStack.empty())return;disab
 __declspec(dllexport) void TestSetVersion(float p){version=p;}
 __declspec(dllexport) void TestSetBlocking(bool p){blocking=p;}
 __declspec(dllexport) void TestAction(int type,const char* label,float p){action=type;actionLabel=label;value=p;}
+__declspec(dllexport) int TestPageIndex(const char* path) {
+    for(std::size_t i=0;i<pages.size();++i)if(pages[i].first==path)return static_cast<int>(i);
+    return -1;
+}
 __declspec(dllexport) unsigned TestPageCount(){return static_cast<unsigned>(pages.size());}
 __declspec(dllexport) int TestControlDisabled(int type,const char* label) {
     for(auto it=controls.rbegin();it!=controls.rend();++it)if(it->type==type && it->label==label)return it->disabled?1:0;

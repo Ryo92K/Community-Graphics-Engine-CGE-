@@ -22,14 +22,17 @@ struct SettingsView {
     Environment environment{Environment::Unknown};
     float hour{-1};
     MotionState motion{MotionState::Off};
-    std::string bloom,fog,dof;
+    std::string bloom,fog,dof,lut,ssao;
 };
 bool ReadSettings(SettingsView&);
 void ApplySettings(const Settings&,bool resetProfiles=false);
 bool SaveSettings();
+std::filesystem::path LutDirectory();
+void ReloadLuts();
 void Scene() noexcept;
 void HDR(ID3D11ShaderResourceView*) noexcept;
 void Frame(IDXGISwapChain*) noexcept;
 void UpdateDimensions(IDXGISwapChain*);
+void BeforeResize(IDXGISwapChain*);
 IDXGISwapChain* Wrap(IDXGISwapChain*) noexcept;
 }

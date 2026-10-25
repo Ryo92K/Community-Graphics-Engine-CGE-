@@ -1,4 +1,5 @@
 #pragma once
+#include "render_target_cache.h"
 #include "settings.h"
 #include "depth_inputs.h"
 #include <d3d11_1.h>
@@ -9,6 +10,7 @@
 namespace cge {
 class DepthOfFieldRenderer {
     template<class T>using Ptr=Microsoft::WRL::ComPtr<T>;
+    RenderTargetCache output_;
     Ptr<ID3D11Device> device_;
     Ptr<ID3D11DeviceContext1> context_;
     Ptr<ID3DDeviceContextState> isolated_;

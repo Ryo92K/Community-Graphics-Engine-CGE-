@@ -3,6 +3,8 @@
 #include "graphics_host.h"
 #include "presets.h"
 #include "finishing_settings.h"
+#include "lut.h"
+#include "profiles.h"
 #include <optional>
 #include <windows.h>
 #include <algorithm>
@@ -33,7 +35,7 @@ struct Api {
 };
 Api api;
 bool registered{},dirty{};
-int selectedProfile{};
+int selectedProfile{-1};
 std::optional<Settings> beforePreset;
 const char* appliedPreset{};
 enum class Feedback {None,Saved,Failed};
@@ -80,19 +82,20 @@ void Render(unsigned page) noexcept {
         if(api.checkbox("Effects enabled",&settings.enabled))Changed();
         api.separator();
         if(page==0) {
+            Text("SSAO (BÊTA)");api.sameLine(0,-1);Text(view.ssao.empty()?"HDR pass not reached":view.ssao.c_str());
             Text("Bloom");api.sameLine(0,-1);
             Text(view.bloom.empty()?"HDR pass not reached":view.bloom.c_str());
             Text("Motion Blur");api.sameLine(0,-1);Text(MotionLabel(view.motion));
             Text("Distance Fog");api.sameLine(0,-1);Text(view.fog.empty()?"HDR pass not reached":view.fog.c_str());
             Text("Depth of Field");api.sameLine(0,-1);Text(view.dof.empty()?"HDR pass not reached":view.dof.c_str());
         }else if(page==7) {
-            Text("Presets replace all CGE settings. Save to keep changes.");
+            Text("Presets replace visual settings and keep Motion Blur. Save to keep changes.");
             const auto choices=presets::List();
             for(std::size_t i=0;i<choices.size();++i) {
                 if(Button(choices[i].name)) {
                     const auto previous=settings;
                     if(presets::Apply(i,settings)) {
-                        beforePreset=previous;selectedProfile=0;Changed();appliedPreset=choices[i].name;
+                        beforePreset=previous;selectedProfile=-1;Changed();appliedPreset=choices[i].name;
                         graphics::ApplySettings(settings,true);
                     }
                 }
@@ -101,7 +104,7 @@ void Render(unsigned page) noexcept {
             api.separator();
             api.beginDisabled(!beforePreset.has_value());
             if(Button("Undo Preset") && beforePreset) {
-                settings=*beforePreset;beforePreset.reset();selectedProfile=0;Changed();
+                settings=*beforePreset;beforePreset.reset();selectedProfile=-1;Changed();
                 graphics::ApplySettings(settings,true);
             }
             api.endDisabled();
@@ -117,30 +120,36 @@ void Render(unsigned page) noexcept {
         }else if(page==4) {
             if(api.checkbox("Motion blur enabled",&settings.motion.enabled))Changed();
             api.beginDisabled(!settings.enabled || !settings.motion.enabled);
-            Control("Intensity",settings.motion.strength,0,2,0.5f);
+            Control("Intensity",settings.motion.strength,0,4,1);
             Control("Blur Radius (px)",settings.motion.radius,1,64,24);
             constexpr const char* choices[]={"8 samples","12 samples","16 samples"};
             int quality=settings.motion.samples==8?0:settings.motion.samples==16?2:1;
             if(api.combo("Quality",&quality,choices,3,-1) && quality>=0 && quality<3) {
                 settings.motion.samples=quality==0?8:quality==2?16:12;Changed();
             }
-            if(Button("Natural")){settings.motion={true,0.5f,24,12};Changed();}
+            if(Button("Natural")){settings.motion={true,1.0f,24,12};Changed();}
             api.sameLine(0,-1);
-            if(Button("Strong")){settings.motion={true,1.5f,48,16};Changed();}
+            if(Button("Strong")){settings.motion={true,2.5f,48,16};Changed();}
             api.endDisabled();
             Text(MotionLabel(view.motion));
         }else {
             constexpr const char* choices[]={"Shared","Interior","Exterior Day","Exterior Night"};
             Text("Edit Profile");
             api.width(-1);
-            int selection=selectedProfile;
-            if(api.combo("##Profile",&selection,choices,4,-1) && selection>=0 && selection<4)selectedProfile=selection;
+            int active=0;
+            if(settings.separateProfiles && view.environment==Environment::Interior)active=1;
+            else if(settings.separateProfiles && view.environment==Environment::Exterior)active=ValidGameHour(view.hour) && NightWeight(view.hour,settings.dayHour,settings.nightHour)>0.5f?3:2;
+            int editing=selectedProfile<0?active:selectedProfile;
+            int selection=editing;
+            if(api.combo("##Profile",&selection,choices,4,-1) && selection>=0 && selection<4){selectedProfile=editing=selection;}
+            if(settings.separateProfiles && editing==0)Text("Shared is inactive while Automatic profiles are enabled.");
+            else if(settings.separateProfiles && active>0 && editing!=active){Text("Active profile");api.sameLine(0,-1);Text(choices[active]);}
             api.separator();
             auto* profile=static_cast<ColorSettings*>(&settings);
-            if(selectedProfile==1)profile=&settings.interior;
-            else if(selectedProfile==2)profile=&settings.exterior;
-            else if(selectedProfile==3)profile=&settings.exteriorNight;
-            const bool disabled=selectedProfile>0 && !settings.separateProfiles;
+            if(editing==1)profile=&settings.interior;
+            else if(editing==2)profile=&settings.exterior;
+            else if(editing==3)profile=&settings.exteriorNight;
+            const bool disabled=editing>0 && !settings.separateProfiles;
             if(disabled)Text("Enable Automatic profiles on the Profiles page to edit this profile.");
             api.beginDisabled(disabled);
             if(page==2) {
@@ -148,21 +157,75 @@ void Render(unsigned page) noexcept {
                 Control("Exposure",profile->exposure,-3,3,0);
                 Control("Contrast",profile->contrast,0,2,1);
                 Control("Saturation",profile->saturation,0,2,1);
-                Control("Sharpness",profile->sharpen,0,1,0);
                 Control("Gamma",profile->gamma,0.5f,2.5f,1);
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
-                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;const auto vibrance=profile->vibrance;
+                    const auto sharpen=profile->sharpen;const auto sharpnessEnabled=profile->sharpnessEnabled;
+                    const auto ssao=profile->ssao;const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;const auto vibrance=profile->vibrance;
                     const auto vignette=profile->vignette;const auto grain=profile->filmGrain;
-                    const auto split=profile->splitToning;const auto aberration=profile->chromaticAberration;const auto debanding=profile->debanding;
-                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;
+                    const auto split=profile->splitToning;const auto aberration=profile->chromaticAberration;const auto debanding=profile->debanding;const auto lgg=profile->liftGammaGain;const auto lut=profile->lut;const auto dirt=profile->lensDirt;const auto distortion=profile->lensDistortion;
+                    *profile=ColorSettings{};profile->ssao=ssao;profile->sharpen=sharpen;profile->sharpnessEnabled=sharpnessEnabled;profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;
                     profile->vignette=vignette;profile->filmGrain=grain;profile->splitToning=split;
-                    profile->chromaticAberration=aberration;profile->debanding=debanding;Changed();
+                    profile->chromaticAberration=aberration;profile->debanding=debanding;profile->liftGammaGain=lgg;profile->lut=lut;profile->lensDirt=dirt;profile->lensDistortion=distortion;Changed();
                 }
                 api.endDisabled();
-            }else if(page>=10 && page<=14) {
-                constexpr const char* keys[]={"Vignette","FilmGrain","SplitToning","ChromaticAberration","Debanding"};
-                constexpr const char* names[]={"Vignette","Film Grain","Split Toning","Chromatic Aberration","Debanding"};
+            }else if(page==20) {
+                if(api.checkbox("SSAO enabled",&profile->ssao.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->ssao.enabled);
+                constexpr const char* qualities[]={"Balanced (half resolution)","High","Ultra"};
+                Text("Quality");
+                if(api.combo("##Quality",&profile->ssao.quality,qualities,3,-1)) {
+                    profile->ssao.quality=std::clamp(profile->ssao.quality,0,2);Changed();
+                }
+                FinishingParameters(*profile,[&](const char* effect,auto,const char* label,float& value,float low,float high,float neutral) {
+                    if(std::string_view(effect)=="SSAO")Control(label,value,low,high,neutral);
+                });
+                if(Button("Reset SSAO")){profile->ssao=SsaoSettings{};Changed();}
+                api.endDisabled();
+                if(!view.ssao.empty())Text(view.ssao.c_str());
+            }else if(page==19) {
+                if(api.checkbox("Sharpness enabled",&profile->sharpnessEnabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->sharpnessEnabled);
+                Control("Sharpness",profile->sharpen,0,1,0);
+                if(Button("Reset Sharpness")){profile->sharpen=0;profile->sharpnessEnabled=true;Changed();}
+                api.endDisabled();
+            }else if(page==18) {
+                if(api.checkbox("Lens Distortion enabled",&profile->lensDistortion.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->lensDistortion.enabled);
+                Control("Amount",profile->lensDistortion.amount,-1,1,0.2f);
+                if(Button("Reset Lens Distortion")){profile->lensDistortion=LensDistortionSettings{};Changed();}
+                api.endDisabled();
+            }else if(page==17) {
+                if(api.checkbox("Lens Dirt enabled",&profile->lensDirt.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->lensDirt.enabled);
+                Control("Strength",profile->lensDirt.strength,0,1,0.35f);
+                Control("Light Threshold",profile->lensDirt.threshold,0.01f,8,0.25f);
+                if(Button("Reset Lens Dirt")){profile->lensDirt=LensDirtSettings{};Changed();}
+                api.endDisabled();
+                if(profile->lensDirt.enabled && (!profile->bloom.enabled || profile->bloom.intensity<=0))Text("Requires Bloom.");
+            }else if(page==16) {
+                if(api.checkbox("3D LUT enabled",&profile->lut.enabled))Changed();
+                api.beginDisabled(!settings.enabled || !profile->lut.enabled);
+                static std::filesystem::path directory;
+                static std::vector<std::string> files;
+                const auto currentDirectory=graphics::LutDirectory();
+                if(directory!=currentDirectory){directory=currentDirectory;files=ListLuts(directory);}
+                std::vector<std::string> names={"None"};names.insert(names.end(),files.begin(),files.end());
+                if(!profile->lut.file.empty() && std::find(names.begin()+1,names.end(),profile->lut.file)==names.end())names.push_back(profile->lut.file);
+                std::vector<const char*> lutChoices;int selected=0;
+                for(std::size_t i=0;i<names.size();++i){lutChoices.push_back(names[i].c_str());if(names[i]==profile->lut.file)selected=static_cast<int>(i);}
+                Text("LUT File");
+                if(api.combo("##LUT File",&selected,lutChoices.data(),static_cast<int>(lutChoices.size()),-1) && selected>=0 && selected<static_cast<int>(names.size())) {
+                    profile->lut.file=selected?names[selected]:"";Changed();
+                }
+                Control("Strength",profile->lut.strength,0,1,1);
+                if(Button("Reload LUTs")){files=ListLuts(directory);graphics::ReloadLuts();}
+                if(Button("Reset 3D LUT")){profile->lut=LutSettings{};Changed();}
+                api.endDisabled();
+                if(!view.lut.empty())Text(view.lut.c_str());
+            }else if(page>=10 && page<=15) {
+                constexpr const char* keys[]={"Vignette","FilmGrain","SplitToning","ChromaticAberration","Debanding","LiftGammaGain"};
+                constexpr const char* names[]={"Vignette","Film Grain","Split Toning","Chromatic Aberration","Debanding","Lift Gamma Gain"};
                 const auto* key=keys[page-10];
                 FinishingEffects(*profile,[&](const char* effect,bool& value) {
                     if(std::string_view(effect)==key && api.checkbox((std::string(names[page-10])+" enabled").c_str(),&value))Changed();
@@ -250,6 +313,12 @@ void __stdcall FilmGrain(){Render(11);}
 void __stdcall SplitToning(){Render(12);}
 void __stdcall ChromaticAberration(){Render(13);}
 void __stdcall Debanding(){Render(14);}
+void __stdcall LiftGammaGain(){Render(15);}
+void __stdcall Lut(){Render(16);}
+void __stdcall LensDirt(){Render(17);}
+void __stdcall LensDistortion(){Render(18);}
+void __stdcall Sharpness(){Render(19);}
+void __stdcall Ssao(){Render(20);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -283,15 +352,20 @@ bool Register(std::string& status) {
     api=candidate;
     constexpr const char* paths[]={
         "Community Graphics Engine/General","Community Graphics Engine/Presets","Community Graphics Engine/Profiles",
-        "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
-        "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
-        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Vibrance",
-        "Community Graphics Engine/Effects/Vignette","Community Graphics Engine/Effects/Film Grain",
-        "Community Graphics Engine/Effects/Split Toning","Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Debanding"};
-    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance,Vignette,FilmGrain,SplitToning,ChromaticAberration,Debanding};
-    for(unsigned i=0;i<15;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Color/Color","Community Graphics Engine/Color/Lift Gamma Gain",
+        "Community Graphics Engine/Color/3D LUT","Community Graphics Engine/Color/Vibrance",
+        "Community Graphics Engine/Color/Split Toning","Community Graphics Engine/Color/Vignette",
+        "Community Graphics Engine/Color/Debanding",
+        "Community Graphics Engine/Effects/Bloom","Community Graphics Engine/Effects/Lens Dirt",
+        "Community Graphics Engine/Effects/SSAO (BÊTA)","Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
+        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Sharpness",
+        "Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Film Grain",
+        "Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Lens Distortion"};
+    const Page pages[]={General,Presets,Profiles,Color,LiftGammaGain,Lut,Vibrance,SplitToning,Vignette,Debanding,
+        Bloom,LensDirt,Ssao,Fog,Dof,Motion,Sharpness,Clarity,FilmGrain,ChromaticAberration,LensDistortion};
+    for(unsigned i=0;i<21;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 15 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 21 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

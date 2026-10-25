@@ -1,0 +1,2 @@
+#pragma once
+inline constexpr char CgeSsaoSource[]=R"CGEHLSL(@CGE_SSAO_SHADER@)CGEHLSL";

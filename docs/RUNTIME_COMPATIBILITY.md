@@ -1,6 +1,6 @@
 # Runtime compatibility
 
-CGE 0.6.3 includes experimental SE/AE runtime adapters.
+CGE 0.7.0 includes experimental SE/AE runtime adapters.
 Each executable requires its matching SKSE64 and Address Library file.
 Skyrim VR, classic Skyrim, Epic, Microsoft Store and unknown builds are excluded.
 
@@ -26,7 +26,7 @@ missing or incompatible, effects can use CGE.ini without a fallback private menu
 
 ## Validation
 
-The 51-test synthetic suite exercises the production plugin across all 23 listed
+The 59-test synthetic suite exercises the production plugin across all 23 listed
 runtime descriptors, including SKSE loading, native hooks, profiles, framework
 controls, effect output and HUD preservation. SE tests include both cinematic
 tone-mapping call sites and a distinct instruction prologue. A guarded legacy
@@ -47,9 +47,40 @@ Back up CGE.ini and replace only CGE.dll to preserve existing settings.
 Launch through the matching SKSE64. CGE.log reports the selected runtime adapter,
 SKSE version, exact library path and initialization status of each native hook.
 Check color, Clarity, Vibrance, the four finishing effects, motion blur, bloom,
-fog, depth of field, profile transitions,
+fog, depth of field, SSAO, profile transitions,
 the framework controls and HUD preservation before reporting a runtime as tested.
 
 A missing library, unsupported instruction sequence or competing hook is logged
 and its corresponding effects remain disabled. CGE does not fall back to
 applying effects over the composed HUD at Present.
+
+
+## Reported 1.6.1170 startup crash
+
+A user report describes a startup crash on 1.6.1170. The affected installation's
+CGE.log, SKSE log and Crash Logger report have not yet been supplied. Its cause
+and resolution are unconfirmed. A passing synthetic 1.6.1170 fixture does not
+establish that this in-game crash is fixed.
+
+The test build uses CommonLibSSE-NG for official SKSE interface access and typed
+native delegates. It retains the existing validated graphics hooks and per-runtime
+layout checks, rather than declaring arbitrary game versions supported. CommonLib's
+upstream reader supports V1/V2 and VR; CGE keeps its own V1/V2/V5 decoding for the
+listed executable formats, including 1.7.104. No VR support is added here.
+
+CGE.log records the runtime, matching library and each startup stage before a
+native hook or graphics initialization. The last startup stage helps locate the
+failure once the affected user provides the log. CommonLib is linked statically
+and adds no runtime DLL requirement for players.
+
+## Future releases
+
+CommonLibSSE-NG remains the compatibility foundation for every new CGE update.
+New effects must retain the listed SE/AE adapters and matching SKSE interfaces.
+New native data reads and rendering hooks require validation for each supported
+runtime. Linking CommonLib alone does not prove compatibility. VR remains deferred.
+
+SSAO reuses the validated HDR hook, world camera and depth adapters. It reads
+perspective frustum extents and near/far planes through the selected layout.
+Invalid projection data bypasses SSAO; the existing fog and DOF near/far checks
+remain independent of the additional lateral extents.
