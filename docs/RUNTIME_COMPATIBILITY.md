@@ -1,6 +1,6 @@
 # Runtime compatibility
 
-CGE 0.6.1 includes experimental SE/AE runtime adapters.
+CGE 0.6.2 includes experimental SE/AE runtime adapters.
 Each executable requires its matching SKSE64 and Address Library file.
 Skyrim VR, classic Skyrim, Epic, Microsoft Store and unknown builds are excluded.
 
@@ -26,7 +26,7 @@ missing or incompatible, effects can use CGE.ini without a fallback private menu
 
 ## Validation
 
-The 45-test synthetic suite exercises the production plugin across all 23 listed
+The 49-test synthetic suite exercises the production plugin across all 23 listed
 runtime descriptors, including SKSE loading, native hooks, profiles, framework
 controls, effect output and HUD preservation. SE tests include both cinematic
 tone-mapping call sites and a distinct instruction prologue. A guarded legacy
@@ -46,7 +46,8 @@ No other runtime has been claimed as in-game validated.
 Back up CGE.ini and replace only CGE.dll to preserve existing settings.
 Launch through the matching SKSE64. CGE.log reports the selected runtime adapter,
 SKSE version, exact library path and initialization status of each native hook.
-Check color, Clarity, motion blur, bloom, fog, depth of field, profile transitions,
+Check color, Clarity, Vibrance, the four finishing effects, motion blur, bloom,
+fog, depth of field, profile transitions,
 the framework controls and HUD preservation before reporting a runtime as tested.
 
 A missing library, unsupported instruction sequence or competing hook is logged

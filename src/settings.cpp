@@ -1,4 +1,6 @@
+#include <string_view>
 #include "settings.h"
+#include "finishing_settings.h"
 #include <windows.h>
 #include <algorithm>
 #include <charconv>
@@ -31,6 +33,12 @@ Settings Settings::Load(const std::filesystem::path& path) {
             else if(value=="false" || value=="0")result.separateProfiles=false;
         }
         if(section=="Interior" || section=="Exterior" || section=="ExteriorDay" || section=="ExteriorNight")profileEntries.push_back({section,key,value});
+        FinishingEffects(result,[&](const char* effect,bool& enabled) {
+            if(section==effect && key=="Enabled") {
+                if(value=="true" || value=="1")enabled=true;
+                else if(value=="false" || value=="0")enabled=false;
+            }
+        });
         if(section=="Vibrance" && key=="Enabled") {
             if(value=="true" || value=="1")result.vibrance.enabled=true;
             else if(value=="false" || value=="0")result.vibrance.enabled=false;
@@ -61,6 +69,9 @@ Settings Settings::Load(const std::filesystem::path& path) {
         }
         float number{};auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+        FinishingParameters(result,[&](const char* effect,const char* field,auto,float& target,float low,float high,auto) {
+            if(section==effect && key==field)target=std::clamp(number,low,high);
+        });
         if(section=="Vibrance" && key=="Strength")result.vibrance.strength=std::clamp(number,0.0f,1.0f);
         if(section=="Clarity" && key=="Strength")result.clarity.strength=std::clamp(number,0.0f,1.0f);
         if(section=="DepthOfField" && key=="FocusDistance")result.dof.focusDistance=std::clamp(number,1.0f,50000.0f);
@@ -87,6 +98,12 @@ Settings Settings::Load(const std::filesystem::path& path) {
     auto apply=[&](const char* name,ColorSettings& profile) {
         for(const auto& entry:profileEntries) {
             if(entry.section!=name)continue;
+            FinishingEffects(profile,[&](const char* effect,bool& enabled) {
+                if(entry.key==std::string(effect)+"Enabled") {
+                    if(entry.value=="true" || entry.value=="1")enabled=true;
+                    else if(entry.value=="false" || entry.value=="0")enabled=false;
+                }
+            });
             if(entry.key=="VibranceEnabled") {
                 if(entry.value=="true" || entry.value=="1")profile.vibrance.enabled=true;
                 else if(entry.value=="false" || entry.value=="0")profile.vibrance.enabled=false;
@@ -110,6 +127,9 @@ Settings Settings::Load(const std::filesystem::path& path) {
             float number{};const auto& value=entry.value;
             const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
             if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+            FinishingParameters(profile,[&](const char* effect,const char* field,auto,float& target,float low,float high,auto) {
+                if(entry.key==std::string(effect)+field)target=std::clamp(number,low,high);
+            });
             if(entry.key=="VibranceStrength")profile.vibrance.strength=std::clamp(number,0.0f,1.0f);
             if(entry.key=="ClarityStrength")profile.clarity.strength=std::clamp(number,0.0f,1.0f);
             if(entry.key=="DofFocusDistance")profile.dof.focusDistance=std::clamp(number,1.0f,50000.0f);
@@ -138,7 +158,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
     try {
         auto finite=[](const ColorSettings& p){return std::isfinite(p.exposure)&&std::isfinite(p.contrast)&&
             std::isfinite(p.saturation)&&std::isfinite(p.sharpen)&&std::isfinite(p.gamma)&&std::isfinite(p.temperature)&&std::isfinite(p.bloom.intensity)&&
-            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance)&&std::isfinite(p.dof.focusDistance)&&std::isfinite(p.dof.strength)&&std::isfinite(p.clarity.strength)&&std::isfinite(p.vibrance.strength);};
+            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance)&&std::isfinite(p.dof.focusDistance)&&std::isfinite(p.dof.strength)&&std::isfinite(p.clarity.strength)&&std::isfinite(p.vibrance.strength)&&FiniteFinishing(p);};
         if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds))return false;
         if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
@@ -168,6 +188,10 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
                 <<"\nClarityStrength="<<std::clamp(p.clarity.strength,0.0f,1.0f)
                 <<"\nVibranceEnabled="<<(p.vibrance.enabled?"true":"false")
                 <<"\nVibranceStrength="<<std::clamp(p.vibrance.strength,0.0f,1.0f)<<"\n";
+            FinishingEffects(p,[&](const char* effect,bool value){text<<effect<<"Enabled="<<(value?"true":"false")<<"\n";});
+            FinishingParameters(p,[&](const char* effect,const char* field,auto,float value,float low,float high,auto) {
+                text<<effect<<field<<"="<<std::clamp(value,low,high)<<"\n";
+            });
         };
         if(profilesConfigured || separateProfiles){writeProfile("Interior",interior);writeProfile("ExteriorDay",exterior);writeProfile("ExteriorNight",exteriorNight);}
         text<<"\n[Bloom]\nEnabled="<<(bloom.enabled?"true":"false")
@@ -184,6 +208,12 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
             <<"\nStrength="<<std::clamp(clarity.strength,0.0f,1.0f)<<"\n";
         text<<"\n[Vibrance]\nEnabled="<<(vibrance.enabled?"true":"false")
             <<"\nStrength="<<std::clamp(vibrance.strength,0.0f,1.0f)<<"\n";
+        FinishingEffects(*this,[&](const char* effect,bool value) {
+            text<<"\n["<<effect<<"]\nEnabled="<<(value?"true":"false")<<"\n";
+            FinishingParameters(*this,[&](const char* group,const char* field,auto,float number,float low,float high,auto) {
+                if(std::string_view(group)==effect)text<<field<<"="<<std::clamp(number,low,high)<<"\n";
+            });
+        });
         text<<"\n[MotionBlur]\nEnabled="<<(motion.enabled?"true":"false")
             <<"\nStrength="<<std::clamp(motion.strength,0.0f,2.0f)
             <<"\nMaxRadius="<<std::clamp(motion.radius,1.0f,64.0f)<<"\nSamples="<<motion.samples<<"\n";

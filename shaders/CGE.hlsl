@@ -13,7 +13,13 @@ cbuffer CgeColorControls : register(b0) {
     uint CgeMotionSamples;
     float CgeClarity;
     float CgeVibrance;
-    float CgePadding;
+    uint CgeGrainFrame;
+    float4 CgeVignette;
+    float4 CgeGrain;
+    float4 CgeSplit;
+    float4 CgeShadows;
+    float4 CgeHighlights;
+    float4 CgeAberration;
 };
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
@@ -57,6 +63,52 @@ float3 ApplyVibrance(float3 color) {
     }
     return luminance+chroma*max(1.0,scale);
 }
+float RadialDistance(float2 position,int2 size) {
+    float2 radialPoint=(position*2.0-float2(size))/float(size.y);
+    return length(radialPoint)/length(float2(size)/float(size.y));
+}
+float3 BilinearSource(float2 position,int2 size) {
+    float2 p=clamp(position-0.5,0,float2(size)-1);
+    int2 at=int2(floor(p));float2 fraction=frac(p);
+    return lerp(lerp(ReadNeighbor(at,size),ReadNeighbor(at+int2(1,0),size),fraction.x),
+        lerp(ReadNeighbor(at+int2(0,1),size),ReadNeighbor(at+int2(1,1),size),fraction.x),fraction.y);
+}
+float3 AberratedSource(float3 color,float2 position,int2 size) {
+    float radial=RadialDistance(position,size);
+    float mask=saturate((radial-CgeAberration.y)/max(0.001,1.0-CgeAberration.y));
+    float2 axis=position-float2(size)*0.5;
+    float2 shift=axis/max(length(axis),1.0)*mask*mask*CgeAberration.x*max(1.0,float(size.y)*8.0/1080.0);
+    if(mask>0) {
+        color.r=BilinearSource(position+shift,size).r;
+        color.b=BilinearSource(position-shift,size).b;
+    }
+    return color;
+}
+float3 ApplySplitToning(float3 color) {
+    float luminance=dot(color,float3(0.2126,0.7152,0.0722));
+    float high=smoothstep(CgeSplit.y-0.25,CgeSplit.y+0.25,luminance);
+    float3 tint=lerp(CgeShadows.rgb,CgeHighlights.rgb,high);
+    float3 delta=(tint-dot(tint,float3(0.2126,0.7152,0.0722)))*CgeSplit.x*0.35*4.0*luminance*(1.0-luminance);
+    float scale=1;
+    [unroll]for(int channel=0;channel<3;++channel) {
+        if(delta[channel]>0.000001)scale=min(scale,(1-color[channel])/delta[channel]);
+        else if(delta[channel]<-0.000001)scale=min(scale,-color[channel]/delta[channel]);
+    }
+    return color+delta*saturate(scale);
+}
+float3 ApplyFilmGrain(float3 color,float2 position) {
+    uint2 cell=uint2(floor(position/CgeGrain.y));
+    uint seed=cell.x*747796405u+cell.y*2891336453u+CgeGrainFrame*277803737u+1013904223u;
+    seed^=seed>>16;seed*=2246822519u;seed^=seed>>13;seed*=3266489917u;seed^=seed>>16;
+    float noise=float(seed&65535u)/65535.0-0.5;
+    float luminance=saturate(dot(color,float3(0.2126,0.7152,0.0722)));
+    float weight=4*luminance*(1-luminance);
+    return saturate(color+noise*CgeGrain.x*0.12*weight);
+}
+float4 FinishMotion(float4 color,int2 pixel) {
+    if(CgeGrain.x>0)color.rgb=ApplyFilmGrain(color.rgb,float2(pixel)+0.5);
+    return color;
+}
 float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     uint width,height;CgeInput.GetDimensions(width,height);
     int2 pixel=int2(position.xy),size=int2(width,height);
@@ -68,13 +120,20 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
             +ReadNeighbor(pixel+int2(0,-1),size)+ReadNeighbor(pixel+int2(0,1),size);
         color+=CgeSharpen*(color-neighbors*0.25);
     }
+    if(CgeAberration.x>0 && CgeAberration.y<1)color+=AberratedSource(source.rgb,position.xy,size)-source.rgb;
     color*=exp2(CgeExposureStops);
     color*=float3(exp2(CgeTemperature*0.25),1.0,exp2(-CgeTemperature*0.25));
     color=(color-0.5)*CgeContrast+0.5;
     float luminance=dot(color,float3(0.2126,0.7152,0.0722));
     color=lerp(luminance.xxx,color,CgeSaturation);
     if(CgeVibrance>0)color=ApplyVibrance(saturate(color));
+    if(CgeSplit.x>0)color=ApplySplitToning(saturate(color));
     color=pow(saturate(color),1.0/CgeGamma);
+    if(CgeVignette.x>0 && CgeVignette.y<1) {
+        float edge=smoothstep(CgeVignette.y,max(CgeVignette.y+0.001,min(1.0,CgeVignette.y+CgeVignette.z)),RadialDistance(position.xy,size));
+        color*=1.0-CgeVignette.x*edge;
+    }
+    if(CgeGrain.x>0 && CgeMotionScale<=0)color=ApplyFilmGrain(color,position.xy);
     return float4(color,source.a);
 }
 
@@ -87,13 +146,13 @@ float4 MotionPixel(float4 position : SV_Position) : SV_Target {
     int2 pixel=int2(position.xy),size=int2(width,height);
     float4 center=CgeInput.Load(int3(pixel,0));
     float2 movement=CgeVelocity.Load(int3(pixel,0));
-    if(!all(isfinite(movement)) || dot(movement,movement)>0.09)return center;
+    if(!all(isfinite(movement)) || dot(movement,movement)>0.09)return FinishMotion(center,pixel);
     float2 extent=movement*float2(size)*CgeMotionScale;
     float distance=length(extent);
-    if(distance<0.5)return center;
+    if(distance<0.5)return FinishMotion(center,pixel);
     extent*=min(1.0,2.0*CgeMotionRadius/max(distance,0.001));
     float z=CgeDepth.Load(int3(pixel,0));
-    if(!isfinite(z) || z<0 || z>1)return center;
+    if(!isfinite(z) || z<0 || z>1)return FinishMotion(center,pixel);
                                                                                      
     float edgeTolerance=max(0.000001,0.05*max(1.0-z,0.000001));
     float3 sum=center.rgb;float weight=1;
@@ -107,5 +166,5 @@ float4 MotionPixel(float4 position : SV_Position) : SV_Target {
         sum+=CgeInput.Load(int3(int2(samplePixel),0)).rgb*w;
         weight+=w;
     }
-    return float4(sum/weight,center.a);
+    return FinishMotion(float4(sum/weight,center.a),pixel);
 }

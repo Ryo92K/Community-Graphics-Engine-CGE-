@@ -248,7 +248,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?10u:0u),"Validate API before registering exactly ten pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?14u:0u),"Validate API before registering exactly fourteen pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -527,12 +527,20 @@ int wmain(int argc,wchar_t** argv) {
             const char *page,*toggle,*control,*reset;
             float(*value)(const cge::Settings&);
         };
+        const char* vignette="Community Graphics Engine/Effects/Vignette";
+        const char* grain="Community Graphics Engine/Effects/Film Grain";
+        const char* split="Community Graphics Engine/Effects/Split Toning";
+        const char* aberration="Community Graphics Engine/Effects/Chromatic Aberration";
         const DisabledCase cases[]={
             {bloom,"Bloom enabled","Intensity","Reset Bloom",[](const cge::Settings& s){return s.bloom.intensity;}},
             {fog,"Fog enabled","Density","Reset Fog",[](const cge::Settings& s){return s.fog.density;}},
             {dof,"Depth of field enabled","Blur Strength","Reset Depth of Field",[](const cge::Settings& s){return s.dof.strength;}},
             {clarity,"Clarity enabled","Strength","Reset Clarity",[](const cge::Settings& s){return s.clarity.strength;}},
             {vibrance,"Vibrance enabled","Strength","Reset Vibrance",[](const cge::Settings& s){return s.vibrance.strength;}},
+            {vignette,"Vignette enabled","Strength","Reset Vignette",[](const cge::Settings& s){return s.vignette.strength;}},
+            {grain,"Film Grain enabled","Strength","Reset Film Grain",[](const cge::Settings& s){return s.filmGrain.strength;}},
+            {split,"Split Toning enabled","Strength","Reset Split Toning",[](const cge::Settings& s){return s.splitToning.strength;}},
+            {aberration,"Chromatic Aberration enabled","Strength","Reset Chromatic Aberration",[](const cge::Settings& s){return s.chromaticAberration.strength;}},
             {motion,"Motion blur enabled","Intensity","",[](const cge::Settings& s){return s.motion.strength;}}
         };
         for(const auto& item:cases) {
@@ -558,6 +566,17 @@ int wmain(int argc,wchar_t** argv) {
             Check(item.value(cge::Settings::Load(config))==0.4f,"Reactivated control accepts edits");
             edit(item.page,1,item.toggle,0);
         }
+        edit(vignette,1,"Vignette enabled",1);edit(vignette,3,"Strength",1);present();pixel(204);
+        context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE edgeMap{};
+        Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&edgeMap)),"Native vignette edge readback");
+        const auto edgeRed=static_cast<const unsigned char*>(edgeMap.pData)[63*edgeMap.RowPitch+63*4];
+        Check(sceneReady?edgeRed<20:edgeRed==204,"Vignette reaches native scene edges only with the verified hook");
+        context->Unmap(readback.Get(),0);edit(vignette,1,"Vignette enabled",0);
+        edit(split,1,"Split Toning enabled",1);edit(split,3,"Shadows Red",0.75f);
+        edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).splitToning.enabled && cge::Settings::Load(config).splitToning.shadowRed==0.75f,
+            "Color reset preserves new finishing settings");
+        edit(split,5,"Reset Split Toning",0);edit(split,5,"Save",0);
         Check(render(motion) && controlDisabled(4,"Quality")==1 && controlDisabled(5,"Natural")==1 &&
             controlDisabled(5,"Strong")==1,"Motion quality and shortcuts disabled with effect");
         edit(motion,4,"Quality",0);edit(motion,5,"Strong",0);edit(motion,5,"Save",0);

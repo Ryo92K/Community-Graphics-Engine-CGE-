@@ -1,3 +1,4 @@
+#include "finishing_settings.h"
 #include "profiles.h"
 #include <cmath>
 #include <limits>
@@ -96,6 +97,21 @@ int main() {
     Check(detail.Update(vibrance,Environment::Interior,1,12).Neutral(),"Vibrance fade reaches neutral");
     vibrance.transitionSeconds=0;detail.Reset();
     Check(Near(detail.Update(vibrance,Environment::Exterior,0,20).vibrance.strength,0.8f),"Vibrance blends at dusk");
+    }
+    {
+        Settings finishing;
+        FinishingEffects(finishing,[](auto,bool& enabled){enabled=true;});
+        finishing.vignette.strength=finishing.filmGrain.strength=finishing.splitToning.strength=finishing.chromaticAberration.strength=0.8f;
+        finishing.SetSeparateProfiles(true);finishing.transitionSeconds=2;
+        FinishingEffects(finishing.interior,[](auto,bool& enabled){enabled=false;});
+        finishing.interior.filmGrain.size=3;finishing.interior.splitToning.shadowRed=0.75f;
+        ProfileTransition transition;
+        transition.Update(finishing,Environment::Exterior,0,12);
+        const auto half=transition.Update(finishing,Environment::Interior,1,12);
+        Check(Near(half.vignette.strength,0.4f) && Near(half.filmGrain.strength,0.4f) &&
+            Near(half.splitToning.strength,0.4f) && Near(half.chromaticAberration.strength,0.4f),"All finishing effects fade through disabled endpoints");
+        Check(Near(half.filmGrain.size,2) && Near(half.splitToning.shadowRed,0.5f),"Grain size and palette transition smoothly");
+        Check(transition.Update(finishing,Environment::Interior,1,12).Neutral(),"Disabled finishing profile reaches neutral output");
     }
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

@@ -1,3 +1,4 @@
+#include "finishing_settings.h"
 #include "settings.h"
 #include <fstream>
 #include <limits>
@@ -174,6 +175,44 @@ int wmain(int argc,wchar_t** argv) {
     Check(Settings::Load(path).vibrance.strength==0.25f,"Non-finite vibrance retains default");
     {std::ofstream file(path);file<<"[DepthOfField]\nEnabled=true\nStrength=0.75\n";}
     Check(!Settings::Load(path).vibrance.enabled && Settings::Load(path).dof.enabled,"Old settings retain their appearance");
+    }
+    {
+        Settings finishing;
+        FinishingEffects(finishing,[](auto,bool& enabled){enabled=true;});
+        FinishingParameters(finishing,[](auto,auto,auto,float& value,float low,float high,auto){value=low+(high-low)*0.3f;});
+        finishing.SetSeparateProfiles(true);
+        FinishingParameters(finishing.interior,[](auto,auto,auto,float& value,float low,float high,auto){value=low+(high-low)*0.2f;});
+        FinishingParameters(finishing.exteriorNight,[](auto,auto,auto,float& value,float low,float high,auto){value=low+(high-low)*0.8f;});
+        Check(finishing.Save(path),"Save four finishing effects");
+        const auto loaded=Settings::Load(path);
+        Check(loaded==finishing && loaded.interior==finishing.interior && loaded.exterior==finishing.exterior &&
+            loaded.exteriorNight==finishing.exteriorNight,"All finishing fields and profiles survive reload");
+        {std::ofstream file(path);file<<"[ExteriorNight]\nVignetteStrength=0.8\nFilmGrainSize=3\n[ExteriorDay]\nSplitToningShadowRed=0.6\n[Vignette]\nEnabled=true\n[SplitToning]\nEnabled=true\n[FilmGrain]\nEnabled=true\n";}
+        const auto inherited=Settings::Load(path);
+        Check(inherited.exteriorNight.vignette.enabled && inherited.exteriorNight.vignette.strength==0.8f &&
+            inherited.exteriorNight.filmGrain.size==3 && inherited.exteriorNight.splitToning.shadowRed==0.6f,
+            "Finishing inheritance ignores INI section order");
+        {
+            std::ofstream file(path);
+            FinishingEffects(finishing,[&](const char* effect,bool){file<<"["<<effect<<"]\nEnabled=true\n";
+                FinishingParameters(finishing,[&](const char* group,const char* key,auto,auto,auto,auto,auto) {
+                    if(std::string_view(group)==effect)file<<key<<"=999\n";
+                });
+            });
+        }
+        const auto bounded=Settings::Load(path);
+        FinishingParameters(bounded,[](auto,auto,auto,float value,auto,float high,auto){Check(value==high,"Finishing INI fields clamp to upper bounds");});
+        Check(finishing.Save(path),"Restore valid settings");
+        for(unsigned invalidField=0;invalidField<15;++invalidField) {
+            auto invalid=finishing;unsigned index=0;
+            FinishingParameters(invalid,[&](auto,auto,auto,float& value,auto,auto,auto) {
+                if(index++==invalidField)value=std::numeric_limits<float>::quiet_NaN();
+            });
+            Check(!invalid.Save(path) && Settings::Load(path)==finishing,"Non-finite finishing value cannot overwrite saved INI");
+        }
+        {std::ofstream file(path);file<<"[Color]\nSaturation=1.2\n";}
+        const auto old=Settings::Load(path);
+        FinishingEffects(old,[](auto,bool enabled){Check(!enabled,"Older configurations keep all four new effects disabled");});
     }
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

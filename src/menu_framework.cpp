@@ -1,6 +1,8 @@
+#include <string_view>
 #include "menu_framework.h"
 #include "graphics_host.h"
 #include "presets.h"
+#include "finishing_settings.h"
 #include <optional>
 #include <windows.h>
 #include <algorithm>
@@ -151,7 +153,32 @@ void Render(unsigned page) noexcept {
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
                     const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;const auto vibrance=profile->vibrance;
-                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;Changed();
+                    const auto vignette=profile->vignette;const auto grain=profile->filmGrain;
+                    const auto split=profile->splitToning;const auto aberration=profile->chromaticAberration;
+                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;
+                    profile->vignette=vignette;profile->filmGrain=grain;profile->splitToning=split;
+                    profile->chromaticAberration=aberration;Changed();
+                }
+                api.endDisabled();
+            }else if(page>=10 && page<=13) {
+                constexpr const char* keys[]={"Vignette","FilmGrain","SplitToning","ChromaticAberration"};
+                constexpr const char* names[]={"Vignette","Film Grain","Split Toning","Chromatic Aberration"};
+                const auto* key=keys[page-10];
+                FinishingEffects(*profile,[&](const char* effect,bool& value) {
+                    if(std::string_view(effect)==key && api.checkbox((std::string(names[page-10])+" enabled").c_str(),&value))Changed();
+                });
+                bool enabled=false;
+                FinishingEffects(*profile,[&](const char* effect,bool value){if(std::string_view(effect)==key)enabled=value;});
+                api.beginDisabled(!settings.enabled || !enabled);
+                FinishingParameters(*profile,[&](const char* effect,auto,const char* label,float& value,float low,float high,float neutral) {
+                    if(std::string_view(effect)==key)Control(label,value,low,high,neutral);
+                });
+                if(Button((std::string("Reset ")+names[page-10]).c_str())) {
+                    FinishingEffects(*profile,[&](const char* effect,bool& value){if(std::string_view(effect)==key)value=false;});
+                    FinishingParameters(*profile,[&](const char* effect,auto,auto,float& value,auto,auto,float neutral) {
+                        if(std::string_view(effect)==key)value=neutral;
+                    });
+                    Changed();
                 }
                 api.endDisabled();
             }else if(page==9) {
@@ -207,6 +234,10 @@ void __stdcall Dof(){Render(6);}
 void __stdcall Presets(){Render(7);}
 void __stdcall Clarity(){Render(8);}
 void __stdcall Vibrance(){Render(9);}
+void __stdcall Vignette(){Render(10);}
+void __stdcall FilmGrain(){Render(11);}
+void __stdcall SplitToning(){Render(12);}
+void __stdcall ChromaticAberration(){Render(13);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -242,11 +273,13 @@ bool Register(std::string& status) {
         "Community Graphics Engine/General","Community Graphics Engine/Presets","Community Graphics Engine/Profiles",
         "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
         "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
-        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Vibrance"};
-    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance};
-    for(unsigned i=0;i<10;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Vibrance",
+        "Community Graphics Engine/Effects/Vignette","Community Graphics Engine/Effects/Film Grain",
+        "Community Graphics Engine/Effects/Split Toning","Community Graphics Engine/Effects/Chromatic Aberration"};
+    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance,Vignette,FilmGrain,SplitToning,ChromaticAberration};
+    for(unsigned i=0;i<14;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 10 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 14 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

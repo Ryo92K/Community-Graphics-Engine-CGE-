@@ -76,6 +76,7 @@ void Renderer::CaptureMotionReadback(const MotionPass& motion,float exposure) {
     motionReadPending_=true;--motionDiagnosticBudget_;nextMotionSample_=now+std::chrono::milliseconds(750);
 }
 bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
+    grainStart_=std::chrono::steady_clock::now();
     device_=device;ComPtr<ID3D11DeviceContext> context;device->GetImmediateContext(&context);
     ComPtr<ID3D11Device1> device1;
     if(FAILED(context.As(&context_)) || FAILED(device->QueryInterface(IID_PPV_ARGS(&device1)))) {
@@ -95,12 +96,12 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
     if(FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)) ||
        FAILED(device->CreatePixelShader(mb->GetBufferPointer(),mb->GetBufferSize(),nullptr,&motionPixel_)))return false;
-    D3D11_BUFFER_DESC desc{};desc.ByteWidth=48;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_BUFFER_DESC desc{};desc.ByteWidth=144;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     if(FAILED(device->CreateBuffer(&desc,nullptr,&constants_)))return false;
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
 }
-std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings,bool enabled,const MotionPass& motion,MotionState* motionState) {
+std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings,bool enabled,const MotionPass& motion,MotionState* motionState,std::optional<std::uint32_t> grainFrame) {
     PollMotionReadback();
     const bool diagnosticActive=enabled && motion.settings.enabled;
     if(diagnosticActive && (!motionDiagnosticActive_ || !(motion.settings==motionDiagnosticSettings_))) {
@@ -167,15 +168,26 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     auto* output=target.Get();context_->OMSetRenderTargets(1,&output,nullptr);
     D3D11_VIEWPORT viewport={0,0,float(desc.Width),float(desc.Height),0,1};context_->RSSetViewports(1,&viewport);
     if(process) {
+        auto bound=[](float value,float low,float high,float fallback){return std::isfinite(value)?std::clamp(value,low,high):fallback;};
+        auto amount=[&](bool enabled,float value){return enabled?bound(value,0,1,0):0;};
+        const auto tick=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now()-grainStart_).count())*24/1000;
         struct Controls {
             float exposure,contrast,saturation,sharpen,gamma,temperature,motionScale,radius;
-            UINT samples;float clarity,vibrance,padding;
+            UINT samples;float clarity,vibrance;UINT grainFrame;
+            float vignette[4],grain[4],split[4],shadows[4],highlights[4],aberration[4];
         } parameters{settings.exposure,settings.contrast,settings.saturation,settings.sharpen,settings.gamma,
             settings.temperature*0.01f,blur?exposure:0,std::clamp(motion.settings.radius,1.0f,64.0f),
             static_cast<UINT>(MotionSettings::ValidSamples(motion.settings.samples)?motion.settings.samples:12),
             settings.clarity.enabled && std::isfinite(settings.clarity.strength)?std::clamp(settings.clarity.strength,0.0f,1.0f):0,
-            settings.vibrance.enabled && std::isfinite(settings.vibrance.strength)?std::clamp(settings.vibrance.strength,0.0f,1.0f):0,0};
-        static_assert(sizeof(Controls)==48);
+            settings.vibrance.enabled && std::isfinite(settings.vibrance.strength)?std::clamp(settings.vibrance.strength,0.0f,1.0f):0,grainFrame.value_or(static_cast<UINT>(tick)),
+            {amount(settings.vignette.enabled,settings.vignette.strength),bound(settings.vignette.radius,0,1,0.35f),bound(settings.vignette.softness,0.01f,1,0.5f),0},
+            {amount(settings.filmGrain.enabled,settings.filmGrain.strength),bound(settings.filmGrain.size,1,4,1),0,0},
+            {amount(settings.splitToning.enabled,settings.splitToning.strength),bound(settings.splitToning.balance,0,1,0.5f),0,0},
+            {bound(settings.splitToning.shadowRed,0,1,0.25f),bound(settings.splitToning.shadowGreen,0,1,0.4f),bound(settings.splitToning.shadowBlue,0,1,0.65f),0},
+            {bound(settings.splitToning.highlightRed,0,1,1),bound(settings.splitToning.highlightGreen,0,1,0.72f),bound(settings.splitToning.highlightBlue,0,1,0.45f),0},
+            {amount(settings.chromaticAberration.enabled,settings.chromaticAberration.strength),bound(settings.chromaticAberration.radius,0,1,0.5f),0,0}};
+        static_assert(sizeof(Controls)==144);
         context_->UpdateSubresource(constants_.Get(),0,nullptr,&parameters,0,0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->RSSetState(raster_.Get());context_->VSSetShader(vertex_.Get(),nullptr,0);

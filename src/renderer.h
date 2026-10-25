@@ -5,6 +5,8 @@
 #include <wrl/client.h>
 #include <string>
 #include <chrono>
+#include <optional>
+#include <cstdint>
 namespace cge {
 using Microsoft::WRL::ComPtr;
 class Renderer {
@@ -32,11 +34,12 @@ class Renderer {
     DXGI_FORMAT sampledFormat_{DXGI_FORMAT_UNKNOWN};
     float sampledExposure_{},sampledRadius_{};
     std::string motionDiagnostic_;
+    std::chrono::steady_clock::time_point grainStart_;
     void PollMotionReadback();
     void CaptureMotionReadback(const MotionPass&,float exposure);
 public:
     bool Initialize(ID3D11Device*,std::string& error);
     std::string TakeMotionDiagnostics();
-    std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const MotionPass& motion={},MotionState* state=nullptr);
+    std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const MotionPass& motion={},MotionState* state=nullptr,std::optional<std::uint32_t> grainFrame={});
 };
 }

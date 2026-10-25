@@ -39,7 +39,18 @@ class ProfileTransition {
             {a.clarity.enabled || b.clarity.enabled,
                 mix(a.clarity.enabled?a.clarity.strength:0,b.clarity.enabled?b.clarity.strength:0)},
             {a.vibrance.enabled || b.vibrance.enabled,
-                mix(a.vibrance.enabled?a.vibrance.strength:0,b.vibrance.enabled?b.vibrance.strength:0)}};
+                mix(a.vibrance.enabled?a.vibrance.strength:0,b.vibrance.enabled?b.vibrance.strength:0)},
+            {a.vignette.enabled || b.vignette.enabled,mix(a.vignette.enabled?a.vignette.strength:0,b.vignette.enabled?b.vignette.strength:0),
+                mix(a.vignette.radius,b.vignette.radius),mix(a.vignette.softness,b.vignette.softness)},
+            {a.filmGrain.enabled || b.filmGrain.enabled,mix(a.filmGrain.enabled?a.filmGrain.strength:0,b.filmGrain.enabled?b.filmGrain.strength:0),
+                mix(a.filmGrain.size,b.filmGrain.size)},
+            {a.splitToning.enabled || b.splitToning.enabled,mix(a.splitToning.enabled?a.splitToning.strength:0,b.splitToning.enabled?b.splitToning.strength:0),
+                mix(a.splitToning.balance,b.splitToning.balance),
+                mix(a.splitToning.shadowRed,b.splitToning.shadowRed),mix(a.splitToning.shadowGreen,b.splitToning.shadowGreen),mix(a.splitToning.shadowBlue,b.splitToning.shadowBlue),
+                mix(a.splitToning.highlightRed,b.splitToning.highlightRed),mix(a.splitToning.highlightGreen,b.splitToning.highlightGreen),mix(a.splitToning.highlightBlue,b.splitToning.highlightBlue)},
+            {a.chromaticAberration.enabled || b.chromaticAberration.enabled,
+                mix(a.chromaticAberration.enabled?a.chromaticAberration.strength:0,b.chromaticAberration.enabled?b.chromaticAberration.strength:0),
+                mix(a.chromaticAberration.radius,b.chromaticAberration.radius)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

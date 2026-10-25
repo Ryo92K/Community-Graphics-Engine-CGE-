@@ -27,6 +27,28 @@ struct VibranceSettings {
     float strength{0.25f};
     bool operator==(const VibranceSettings&) const =default;
 };
+struct VignetteSettings {
+    bool enabled{false};
+    float strength{0.25f},radius{0.35f},softness{0.5f};
+    bool operator==(const VignetteSettings&) const =default;
+};
+struct FilmGrainSettings {
+    bool enabled{false};
+    float strength{0.1f},size{1};
+    bool operator==(const FilmGrainSettings&) const =default;
+};
+struct SplitToningSettings {
+    bool enabled{false};
+    float strength{0.25f},balance{0.5f};
+    float shadowRed{0.25f},shadowGreen{0.4f},shadowBlue{0.65f};
+    float highlightRed{1},highlightGreen{0.72f},highlightBlue{0.45f};
+    bool operator==(const SplitToningSettings&) const =default;
+};
+struct ChromaticAberrationSettings {
+    bool enabled{false};
+    float strength{0.25f},radius{0.5f};
+    bool operator==(const ChromaticAberrationSettings&) const =default;
+};
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
     BloomSettings bloom;
@@ -34,7 +56,15 @@ struct ColorSettings {
     DofSettings dof;
     ClaritySettings clarity;
     VibranceSettings vibrance;
-    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0);}
+    VignetteSettings vignette;
+    FilmGrainSettings filmGrain;
+    SplitToningSettings splitToning;
+    ChromaticAberrationSettings chromaticAberration;
+    bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0) &&
+        (!vignette.enabled || vignette.strength<=0 || vignette.radius>=1) &&
+        (!filmGrain.enabled || filmGrain.strength<=0) &&
+        (!splitToning.enabled || splitToning.strength<=0) &&
+        (!chromaticAberration.enabled || chromaticAberration.strength<=0 || chromaticAberration.radius>=1);}
     bool operator==(const ColorSettings&) const =default;
 };
 struct MotionSettings {

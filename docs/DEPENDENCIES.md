@@ -16,7 +16,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers ten pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers fourteen pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -227,3 +227,56 @@ the dependent parameter scope. Inactive profile scopes remain authoritative
 when nested inside enabled effects. Re-enabling restores the stored values.
 Framework tests cover blocked edits and resets, reactivation, master state,
 inactive profiles and balanced disabled scopes.
+
+
+## Finishing effects (0.6.2)
+
+Vignette, Film Grain, Split Toning and Chromatic Aberration are implemented in
+CGE.hlsl and share the existing pre-HUD color pipeline. They default to disabled.
+The CPU/HLSL control buffer is 144 bytes with explicit float4 groups.
+
+finishing_settings.h defines each numeric field, its bounds and default once.
+INI parsing, writing, finite-value validation and menu controls use this schema.
+Profile fields prefix the effect name, for example VignetteStrength or
+SplitToningShadowRed. Shared values use separate effect sections.
+All effect strengths fade through zero at disabled transition endpoints.
+Reset Color preserves these settings. Each effect reset changes only its own
+selected profile, and inactive controls remain grayed out.
+
+Vignette uses corner-normalized radial distance with pixel aspect correction.
+Radius preserves the central region and Softness controls the edge transition.
+Radius 1 or Strength 0 bypasses it. No texture reads are added.
+
+Film Grain uses an integer spatial hash and a steady-clock tick at 24 Hz.
+The same tick retains the same pattern; no temporal history texture is needed.
+Size is measured in render pixels, from 1 to 4. Strength is at most 1.
+Monochrome noise is attenuated near black and white. It follows gamma and is
+applied after motion filtering, including stationary/invalid-vector fallbacks.
+A supplied tick allows deterministic rendering tests without sleeping.
+
+Split Toning blends user-defined shadow/highlight RGB palettes around Balance.
+The tint's luminance is removed and a shared scale limits the chroma offset to
+the available gamut. Black and white are protected. It follows Vibrance and
+precedes gamma. It performs no texture reads.
+
+Chromatic Aberration offsets red and blue symmetrically along the radial axis.
+Green and source alpha remain centered. A protected central radius and squared
+edge mask restrict the displacement. Maximum extent at Strength 1 is eight
+pixels at 1080p, with a one-pixel minimum at low resolution. The shader reads
+bilinear source samples through clamped integer loads, requiring up to eight
+additional texture reads only where the effect is active. It needs no sampler,
+depth resource or new render target.
+
+The five presets retain their 0.6.1 color/detail balance. Natural leaves the four
+new treatments off. Nordic and Warm Fantasy use modest Split Toning. Cinematic
+and Soft Focus use restrained vignette, grain, toning and aberration, with lower
+strengths at night. Disabled treatments retain usable starting values for later
+activation. Soft Focus still keeps Clarity off. Optional INIs are exported
+from the same definitions and checked after reloading. Existing user settings
+are not replaced until a preset is selected and saved.
+
+49 automated tests include separate GPU checks for all four effects, grain after
+stationary and moving motion filtering, fixed-tick combinations, profile
+persistence and transitions, disabled controls, resets, native scene edges,
+HUD preservation and exact preset export/reload. In-game appearance and GPU
+timings remain to be checked.

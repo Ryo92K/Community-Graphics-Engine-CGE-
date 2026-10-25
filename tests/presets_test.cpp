@@ -28,6 +28,11 @@ int wmain(int argc,wchar_t** argv) {
             Check(p->clarity.enabled==(i!=4),"Soft Focus preserves softness; other presets use Clarity");
             Check(p->sharpen<=0.06f,"Sharpness reduced to balance the detail controls");
             Check(p->dof.enabled==(i==4),"Only Soft Focus uses depth of field");
+            Check(p->vignette.enabled==(i>=3) && p->filmGrain.enabled==(i>=3) &&
+                p->chromaticAberration.enabled==(i>=3),"Lens and grain treatments reserved for cinematic presets");
+            Check(p->splitToning.enabled==(i>0),"Natural keeps neutral toning; styled presets use color separation");
+            Check(p->filmGrain.strength<=0.1f && (!p->chromaticAberration.enabled || p->chromaticAberration.strength<=0.06f),"Grain and aberration remain restrained");
+
         }
         Check(value.exteriorNight.vibrance.strength<value.exterior.vibrance.strength,"Night uses less Vibrance");
         if(i!=4)Check(value.exteriorNight.clarity.strength<value.exterior.clarity.strength,"Night uses less Clarity");
