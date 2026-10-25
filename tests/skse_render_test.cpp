@@ -19,14 +19,25 @@ void Check(bool value,const char* message){if(!value){std::printf("FAIL: %s\n",m
 template<class T>T Proc(HMODULE m,const char* name){auto p=reinterpret_cast<T>(GetProcAddress(m,name));Check(p!=nullptr,name);return p;}
 void Write(const fs::path& p,const std::string& text){std::ofstream f(p);Check(bool(f<<text),"Write fixture");}
 #pragma section(".cgeui",read,execute)
-__declspec(allocate(".cgeui")) const unsigned char interfaceFixture[]={
+__declspec(allocate(".cgeui")) const unsigned char interfaceFixture[64]={
     0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50,
     0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0xc3
 };
+cge::runtime::Layout fixtureLayout=*cge::runtime::Select(cge::skse::Runtime);
+void PrepareInterfaceFixture() {
+    if(fixtureLayout.family!=cge::runtime::Family::SE)return;
+    const unsigned char bytes[]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x70,0x10,0x57,0x48,0x83,0xec,0x20,
+        0x48,0x83,0xc4,0x20,0x5f,0x48,0x8b,0x5c,0x24,0x08,0x48,0x8b,0x74,0x24,0x10,0xc3};
+    auto* code=const_cast<unsigned char*>(interfaceFixture);DWORD old{},ignored{};
+    Check(VirtualProtect(code,sizeof(interfaceFixture),PAGE_EXECUTE_READWRITE,&old)!=FALSE,"SE prologue writable");
+    memcpy(code,bytes,sizeof(bytes));VirtualProtect(code,sizeof(interfaceFixture),old,&ignored);
+    FlushInstructionCache(GetCurrentProcess(),code,sizeof(interfaceFixture));
+}
 void InterfaceBoundary(){reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);}
 #pragma section(".cgehdr",read,execute)
-__declspec(allocate(".cgehdr")) const unsigned char tonemapFixture[0x190]{};
+__declspec(allocate(".cgehdr")) const unsigned char tonemapFixture[0x260]{};
 __declspec(allocate(".cgehdr")) const unsigned char imageSpaceDrawFixture[64]{};
+__declspec(allocate(".cgehdr")) const unsigned char secondTonemapFixture[64]{};
 unsigned hdrDelegations{};
 void* expectedHdrParameter=reinterpret_cast<void*>(0x1234);
 void NativeTonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
@@ -45,14 +56,25 @@ void PrepareTonemapFixture() {
         0x48,0x8b,0x44,0x24,0x60,0x48,0x89,0x44,0x24,0x20};
     memcpy(main,enter,sizeof(enter));
     const unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
-    memcpy(main+0x170,arguments,sizeof(arguments));main[0x178]=0xe8;
-    const auto offset=static_cast<std::int32_t>(draw-(main+0x17d));memcpy(main+0x179,&offset,4);
-    const unsigned char leave[]={0x48,0x83,0xc4,0x30,0x5b,0xc3};memcpy(main+0x17d,leave,sizeof(leave));
+    for(unsigned i=0;i<fixtureLayout.callCount;++i) {
+        const auto at=fixtureLayout.tonemapCalls[i];
+        memcpy(main+at-8,arguments,sizeof(arguments));main[at]=0xe8;
+        const auto offset=static_cast<std::int32_t>(draw-(main+at+5));memcpy(main+at+1,&offset,4);
+        const unsigned char leave[]={0x48,0x83,0xc4,0x30,0x5b,0xc3};memcpy(main+at+5,leave,sizeof(leave));
+    }
     const unsigned char prefix[]={0x4c,0x8b,0xdc,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x70,
         0x48,0x83,0xc4,0x70,0x41,0x5f,0x41,0x5e,0x5f,0x5e,0x5d};
     memcpy(draw,prefix,sizeof(prefix));
     draw[25]=0xff;draw[26]=0x25;memset(draw+27,0,4);
     auto* target=reinterpret_cast<void*>(NativeTonemap);memcpy(draw+31,&target,8);
+    if(fixtureLayout.callCount==2) {
+        auto* second=const_cast<unsigned char*>(secondTonemapFixture);DWORD oldSecond{};
+        Check(VirtualProtect(second,64,PAGE_EXECUTE_READWRITE,&oldSecond)!=FALSE,"SE alternate HDR entry writable");
+        memcpy(second,enter,sizeof(enter));const auto at=sizeof(enter);
+        second[at]=0xff;second[at+1]=0x25;memset(second+at+2,0,4);
+        auto* target=main+fixtureLayout.tonemapCalls[1]-8;memcpy(second+at+6,&target,8);
+        VirtualProtect(second,64,oldSecond,&ignored);FlushInstructionCache(GetCurrentProcess(),second,64);
+    }
     VirtualProtect(main,sizeof(tonemapFixture),oldMain,&ignored);
     VirtualProtect(draw,sizeof(imageSpaceDrawFixture),oldDraw,&ignored);
     FlushInstructionCache(GetCurrentProcess(),main,sizeof(tonemapFixture));
@@ -60,7 +82,9 @@ void PrepareTonemapFixture() {
 }
 void TonemapBoundary() {
     using Draw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,void*);
-    reinterpret_cast<Draw>(const_cast<unsigned char*>(tonemapFixture))(reinterpret_cast<void*>(0x5678),0x22,1,0x29,expectedHdrParameter);
+    static bool alternate=false;alternate=!alternate;
+    auto* code=fixtureLayout.callCount==2 && alternate?secondTonemapFixture:tonemapFixture;
+    reinterpret_cast<Draw>(const_cast<unsigned char*>(code))(reinterpret_cast<void*>(0x5678),0x22,1,0x29,expectedHdrParameter);
 }
 alignas(8) unsigned char playerFixture[0x80]{};
 alignas(8) unsigned char cellFixture[0x50]{};
@@ -100,22 +124,35 @@ void SetCell(bool interior) {
     const void* cell=cellFixture;memcpy(playerFixture+0x60,&cell,sizeof(cell));
 }
 void WriteLibrary(const fs::path& path) {
-    std::vector<std::uint32_t> library(24+414661);
-    library[0]=5;library[1]=1;library[2]=7;library[3]=104;
-    memcpy(reinterpret_cast<char*>(library.data())+20,"SkyrimSE.exe",12);
-    library[21]=8;library[23]=414661;
-    library[24+82084]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(interfaceFixture)-
-        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
-    library[24+400447]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&calendarSingletonFixture)-
-        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
-    library[24+403521]=static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&playerSingletonFixture)-
-        reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
-    const std::pair<unsigned,const void*> motionEntries[]={
-        {36609,cameraGetterFixture},{403513,&worldRootSingletonFixture},{105674,tonemapFixture},{105676,imageSpaceDrawFixture},{411393,rendererFixture},{414660,&imageSpaceSingletonFixture},{400327,&uiSingletonFixture}};
-    for(auto [id,address]:motionEntries)library[24+id]=static_cast<std::uint32_t>(
-        reinterpret_cast<std::uintptr_t>(address)-reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr)));
+    const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    const std::pair<cge::runtime::Address,const void*> values[]={
+        {cge::runtime::Address::Interface,interfaceFixture},{cge::runtime::Address::Calendar,&calendarSingletonFixture},
+        {cge::runtime::Address::Player,&playerSingletonFixture},{cge::runtime::Address::CameraGetter,cameraGetterFixture},
+        {cge::runtime::Address::WorldRoot,&worldRootSingletonFixture},{cge::runtime::Address::Tonemap,tonemapFixture},
+        {cge::runtime::Address::Renderer,rendererFixture},{cge::runtime::Address::ImageSpace,&imageSpaceSingletonFixture},
+        {cge::runtime::Address::UI,&uiSingletonFixture}};
+    std::vector<std::pair<std::uint32_t,std::uint32_t>> entries;
+    for(auto [key,address]:values)entries.emplace_back(fixtureLayout.Id(key),static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(address)-base));
+    if(fixtureLayout.Id(cge::runtime::Address::Draw))entries.emplace_back(fixtureLayout.Id(cge::runtime::Address::Draw),
+        static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(imageSpaceDrawFixture)-base));
     std::ofstream file(path,std::ios::binary);
-    file.write(reinterpret_cast<const char*>(library.data()),static_cast<std::streamsize>(library.size()*4));
+    if(fixtureLayout.version>=cge::runtime::Pack(7,99)) {
+        std::vector<std::uint32_t> library(24+414661);
+        library[0]=5;library[1]=1;library[2]=(fixtureLayout.version>>16)&255;library[3]=(fixtureLayout.version>>4)&4095;
+        memcpy(reinterpret_cast<char*>(library.data())+20,"SkyrimSE.exe",12);library[21]=8;library[23]=414661;
+        for(auto [id,offset]:entries)library[24+id]=offset;
+        file.write(reinterpret_cast<const char*>(library.data()),static_cast<std::streamsize>(library.size()*4));
+    }else {
+        const std::uint32_t header[]={fixtureLayout.family==cge::runtime::Family::SE?1u:2u,1,
+            (fixtureLayout.version>>16)&255,(fixtureLayout.version>>4)&4095,0,12};
+        file.write(reinterpret_cast<const char*>(header),sizeof(header));file.write("SkyrimSE.exe",12);
+        const std::uint32_t tail[]={8,static_cast<std::uint32_t>(entries.size())};
+        file.write(reinterpret_cast<const char*>(tail),sizeof(tail));
+        for(auto [id,offset]:entries) {
+            file.put(0);
+            const std::uint64_t pair[]={id,offset};file.write(reinterpret_cast<const char*>(pair),sizeof(pair));
+        }
+    }
     Check(bool(file),"Write Address Library fixture");
 }
 
@@ -125,11 +162,22 @@ bool Listen(std::uint32_t handle,const char* sender,void(*callback)(cge::skse::M
     Check(handle==7 && !strcmp(sender,"SKSE"),"SKSE message subscription");listener=callback;return true;
 }
 cge::skse::Messaging messaging{2,Listen,nullptr,nullptr};
-void* Query(std::uint32_t id){return id==5?&messaging:nullptr;}
+bool legacyApi{};
+struct LegacyMessaging {std::uint32_t version;bool(*registerListener)(std::uint32_t,const char*,void(*)(cge::skse::Message*));};
+LegacyMessaging legacyMessaging{1,Listen};
+void* Query(std::uint32_t id){return id==5?(legacyApi?static_cast<void*>(&legacyMessaging):static_cast<void*>(&messaging)):nullptr;}
 std::uint32_t Handle(){++handleCalls;return 7;}
 int wmain(int argc,wchar_t** argv) {
     Check(argc==5,"DLL, fixture, mode and test framework");
     const std::wstring mode=argv[3];
+    if(mode.starts_with(L"--runtime-")) {
+        unsigned minor{},revision{};
+        Check(swscanf_s(mode.c_str(),L"--runtime-%u-%u",&minor,&revision)==2,"Parse runtime case");
+        const auto selected=cge::runtime::Select(cge::runtime::Pack(minor,revision));
+        Check(selected.has_value(),"Supported fixture runtime");fixtureLayout=*selected;
+    }
+    legacyApi=mode==L"--legacy-api";
+    if(legacyApi)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(5,3));
     const bool missing=mode==L"--missing-framework",old=mode==L"--old-framework",
         incomplete=mode==L"--incomplete-framework",sceneMissing=mode==L"--missing-library",
         invalidLibrary=mode==L"--invalid-library",sceneConflict=mode==L"--hook-conflict",
@@ -140,10 +188,10 @@ int wmain(int argc,wchar_t** argv) {
     fs::create_directories(root);fs::copy_file(argv[1],root/"CGE.dll",fs::copy_options::overwrite_existing);
     auto config=root/"CGE.ini";
     Write(config,"[Color]\nExposureStops=-1\n[Input]\nToggleKey=119\n");
-    PrepareTonemapFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
+    PrepareInterfaceFixture();PrepareTonemapFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
     SetCell(false);SetGameHour(12);
     const void* temporal=temporalFixture;memcpy(imageSpaceFixture+0x1f0,&temporal,sizeof(temporal));temporalFixture[0x18]=1;
-    const auto library=root/"versionlib-1-7-104-0.bin";WriteLibrary(library);
+    const auto library=root/fixtureLayout.LibraryName();WriteLibrary(library);
     if(sceneMissing)fs::remove(library);
     if(invalidLibrary)Write(library,"invalid");
     auto corrupt=[](const unsigned char* address){
@@ -152,14 +200,34 @@ int wmain(int argc,wchar_t** argv) {
         *p=0x90;VirtualProtect(p,1,oldProtection,&ignored);
     };
     if(sceneConflict)corrupt(interfaceFixture);
-    if(hdrConflict)corrupt(tonemapFixture+0x178);
+    if(hdrConflict)corrupt(tonemapFixture+fixtureLayout.tonemapCalls[0]);
     auto module=LoadLibraryExW((root/"CGE.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     Check(module!=nullptr,"Load production CGE.dll");
     auto load=Proc<bool(*)(const cge::skse::Interface*)>(module,"SKSEPlugin_Load");
-    cge::skse::Interface api{0x02030010,cge::skse::Runtime,0,0,Query,Handle};
-    auto wrong=api;wrong.runtimeVersion=0x01061170;
+    cge::skse::Interface api{0x02030010,fixtureLayout.version,0,0,Query,Handle};
+    const cge::skse::Interface* apiView=&api;
+    if(legacyApi) {
+        api.skseVersion=0x02000020;
+        SYSTEM_INFO system{};GetSystemInfo(&system);
+        auto* memory=static_cast<unsigned char*>(VirtualAlloc(nullptr,system.dwPageSize*2,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
+        Check(memory!=nullptr,"Legacy ABI allocation");DWORD oldProtection{};
+        Check(VirtualProtect(memory+system.dwPageSize,system.dwPageSize,PAGE_NOACCESS,&oldProtection)!=FALSE,"Legacy ABI guard page");
+        constexpr auto size=offsetof(cge::skse::Interface,getReleaseIndex);
+        auto* prefix=memory+system.dwPageSize-size;memcpy(prefix,&api,size);
+        apiView=reinterpret_cast<const cge::skse::Interface*>(prefix);
+    }
+    auto wrong=api;wrong.runtimeVersion=cge::runtime::Pack(7,105);
     Check(!load(&wrong) && !load(nullptr),"Unsupported runtime refused");
-    Check(load(&api) && load(&api) && listener && handleCalls==1,"Creation hook and one SKSE listener");
+    auto query=Proc<bool(*)(const cge::skse::Interface*,cge::skse::Info*)>(module,"SKSEPlugin_Query");
+    cge::skse::Info info{};
+    Check(query(apiView,&info) && info.version==cge::skse::Version && !query(&wrong,&info),"Legacy SKSE Query uses selected runtime");
+    const auto* metadata=Proc<const cge::skse::Metadata*>(module,"SKSEPlugin_Version");
+    Check(metadata->versionIndependenceEx==2 && !metadata->minimumSkse,"V5 support with no fixed SKSE package version");
+    if(fixtureLayout.family==cge::runtime::Family::AE) {
+        bool listed=false;for(auto value:metadata->compatibleVersions)if(value==fixtureLayout.version)listed=true;
+        Check(listed,"AE runtime is declared in SKSE loader metadata");
+    }
+    Check(load(apiView) && load(apiView) && listener && handleCalls==1,"Creation hook and one SKSE listener");
     HMODULE framework{};
     using Render=bool(*)(const char*);
     Render render{};
@@ -211,7 +279,7 @@ int wmain(int argc,wchar_t** argv) {
     device->CreateShaderResourceView(depth.Get(),nullptr,&depthView);
     data.assign(64*64,0.5f);context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
     auto* v=velocityView.Get();auto* z=depthView.Get();
-    memcpy(rendererFixture+0xbc0,&v,sizeof(v));memcpy(rendererFixture+0x20a0,&z,sizeof(z));
+    memcpy(rendererFixture+0xbc0,&v,sizeof(v));memcpy(rendererFixture+fixtureLayout.depthView,&z,sizeof(z));
     d.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;d.BindFlags|=D3D11_BIND_RENDER_TARGET;
     device->CreateTexture2D(&d,nullptr,&hdr);device->CreateShaderResourceView(hdr.Get(),nullptr,&hdrView);
     auto* h=hdrView.Get();memcpy(rendererFixture+0xaa0,&h,sizeof(h));
@@ -305,9 +373,9 @@ int wmain(int argc,wchar_t** argv) {
             Check(halo()>0.2f,"Fog uses native depth while TAA and motion blur are disabled");
             edit(general,1,"Effects enabled",0);present();Check(halo()==0.05f,"Master checkbox bypasses fog");
             edit(general,1,"Effects enabled",1);
-            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+0x20a0,&invalid,sizeof(invalid));
+            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+fixtureLayout.depthView,&invalid,sizeof(invalid));
             present();Check(halo()==0.05f,"Invalid native depth pointer bypasses fog");
-            auto* valid=depthView.Get();memcpy(rendererFixture+0x20a0,&valid,sizeof(valid));
+            auto* valid=depthView.Get();memcpy(rendererFixture+fixtureLayout.depthView,&valid,sizeof(valid));
             float invalidNear=0;memcpy(cameraFixture+0x160,&invalidNear,4);present();
             Check(halo()==0.05f,"Invalid native frustum bypasses fog");
             const float nearPlane=1;memcpy(cameraFixture+0x160,&nearPlane,4);
@@ -342,9 +410,9 @@ int wmain(int argc,wchar_t** argv) {
             edit(dof,3,"Focus Distance (units)",500);
             edit(general,1,"Effects enabled",0);present();Check(hdrPixel(32)==8,"Master checkbox bypasses depth of field");
             edit(general,1,"Effects enabled",1);
-            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+0x20a0,&invalid,sizeof(invalid));
+            void* invalid=reinterpret_cast<void*>(1);memcpy(rendererFixture+fixtureLayout.depthView,&invalid,sizeof(invalid));
             present();Check(hdrPixel(32)==8,"Missing native depth safely bypasses depth of field");
-            auto* valid=depthView.Get();memcpy(rendererFixture+0x20a0,&valid,sizeof(valid));
+            auto* valid=depthView.Get();memcpy(rendererFixture+fixtureLayout.depthView,&valid,sizeof(valid));
             float invalidNear=0;memcpy(cameraFixture+0x160,&invalidNear,4);present();
             Check(hdrPixel(32)==8,"Invalid camera safely bypasses depth of field");
             const float nearPlane=1;memcpy(cameraFixture+0x160,&nearPlane,4);

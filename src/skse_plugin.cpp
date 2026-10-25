@@ -48,7 +48,11 @@ HRESULT WINAPI OnCreation(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE s
 extern "C" {
 __declspec(dllexport) constinit cge::skse::Metadata SKSEPlugin_Version={
     1,cge::skse::Version,"Community Graphics Engine","CGE contributors","",
-    0,0,{cge::skse::Runtime,0},0
+    2,0,{cge::runtime::Pack(6,317),cge::runtime::Pack(6,318),cge::runtime::Pack(6,323),
+        cge::runtime::Pack(6,342),cge::runtime::Pack(6,353),cge::runtime::Pack(6,629),
+        cge::runtime::Pack(6,640),cge::runtime::Pack(6,659),cge::runtime::Pack(6,1130),
+        cge::runtime::Pack(6,1170),cge::runtime::Pack(6,1179),
+        cge::runtime::Pack(7,99),cge::runtime::Pack(7,104),cge::runtime::Pack(5,97),0},0
 };
 __declspec(dllexport) bool SKSEPlugin_Query(const cge::skse::Interface* api,cge::skse::Info* info) {
     if(!info)return false;
@@ -57,12 +61,13 @@ __declspec(dllexport) bool SKSEPlugin_Query(const cge::skse::Interface* api,cge:
 }
 __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
     if(!cge::skse::Compatible(api))return false;
-    if(loaded)return true;
+    if(loaded)return api->runtimeVersion==cge::runtime::selected.version;
+    cge::runtime::selected=*cge::runtime::Select(api->runtimeVersion);
     try {
         wchar_t path[32768]{};auto length=GetModuleFileNameW(module,path,ARRAYSIZE(path));
         if(!length || length>=ARRAYSIZE(path))return false;
         directory=std::filesystem::path(path).parent_path();logPath=directory/"CGE.log";
-        Log("Community Graphics Engine (CGE) 0.5.2 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.6.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
                                                                                           
                                                                                  
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -81,39 +86,40 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         }
         wchar_t executablePath[32768]{};
         const auto executableLength=GetModuleFileNameW(nullptr,executablePath,ARRAYSIZE(executablePath));
-        auto library=directory/"versionlib-1-7-104-0.bin";
+        auto library=directory/cge::runtime::selected.LibraryName();
         if(executableLength && executableLength<ARRAYSIZE(executablePath)) {
             auto virtualLibrary=std::filesystem::path(executablePath).parent_path()/
-                "Data"/"SKSE"/"Plugins"/"versionlib-1-7-104-0.bin";
+                "Data"/"SKSE"/"Plugins"/cge::runtime::selected.LibraryName();
                                                                                       
             std::error_code ec;
             if(std::filesystem::exists(virtualLibrary,ec))library=virtualLibrary;
         }
+        Log("CGE runtime adapter: %s; Address Library: %ls; SKSE=0x%08X",cge::runtime::selected.VersionString().c_str(),library.c_str(),api->skseVersion);
         if(cge::startup::HookInterface(GetModuleHandleW(nullptr),library,cge::graphics::Scene,error))
-            Log("CGE scene hook ready: DrawInterfaceStart (82084); effects run before HUD and menus");
+            Log("CGE scene hook ready: DrawInterfaceStart; effects run before HUD and menus");
         else Log("CGE scene hook unavailable: %s. Effects will not run at Present.",error.c_str());
         if(cge::startup::InitializeEnvironment(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetEnvironmentProbe(cge::startup::PollEnvironment);
-            Log("CGE automatic profiles ready: player cell (403521)");
+            Log("CGE automatic profiles ready: player cell");
         }else Log("CGE automatic profiles unavailable: %s",error.c_str());
         if(cge::startup::InitializeClock(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetGameHourProbe(cge::startup::PollGameHour);
-            Log("CGE day/night clock ready: Calendar (400447)");
+            Log("CGE day/night clock ready: Calendar");
         }else Log("CGE day/night clock unavailable: %s",error.c_str());
         if(cge::startup::InitializeMotion(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetMotionProbe(cge::startup::PollMotion);
-            Log("CGE native motion resources ready: Renderer (411393), ImageSpaceManager (414660), UI (400327)");
+            Log("CGE native motion resources ready: Renderer, ImageSpaceManager, UI");
         }else Log("CGE motion resources unavailable: %s",error.c_str());
         if(cge::startup::InitializeDepth(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetDepthProbe(cge::startup::PollDepth);
-            Log("CGE native depth resources ready: main depth, WorldRootCamera (36609), world root (403513)");
+            Log("CGE native depth resources ready: main depth, WorldRootCamera, world root");
         }else Log("CGE depth resources unavailable: %s",error.c_str());
         if(cge::startup::HookTonemap(GetModuleHandleW(nullptr),library,cge::graphics::HDR,error))
-            Log("CGE HDR hook ready: main cinematic tone mapping (105674 + 0x178); fog and bloom run before tone mapping");
+            Log("CGE HDR hook ready: main cinematic tone mapping; fog and bloom run before tone mapping");
         else Log("CGE HDR hook unavailable: %s",error.c_str());
         if(api->queryInterface && api->getPluginHandle) {
             auto* messaging=static_cast<cge::skse::Messaging*>(api->queryInterface(5));
-            if(!messaging || messaging->version<2 || !messaging->registerListener ||
+            if(!messaging || messaging->version<1 || !messaging->registerListener ||
                 !messaging->registerListener(api->getPluginHandle(),"SKSE",OnSKSEMessage))
                 Log("CGE menu unavailable: SKSE messaging registration failed");
         }else Log("CGE menu unavailable: SKSE messaging API missing");

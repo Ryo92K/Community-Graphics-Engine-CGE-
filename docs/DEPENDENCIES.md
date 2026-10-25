@@ -9,7 +9,8 @@ CGE uses system Direct3D 11.1, DXGI and D3DCompiler_47.
 
 ## Runtime
 
-Skyrim Steam 1.7.104, SKSE 2.3.1 and Address Library V5 for this executable.
+A listed SE/AE executable, its matching SKSE64, and the corresponding Address Library.
+See RUNTIME_COMPATIBILITY.md for the exact adapter list and validation limits.
 SKSE Menu Framework 3.14 or newer provides the settings interface. Install the
 framework and its listed requirements separately.
 
@@ -41,11 +42,16 @@ The separate framework controls its own styling, rendering and input.
 
 ## Native rendering interfaces
 
-The exact 1.7.104 ABI and hook bytes are validated before modification.
-CGE hooks DrawInterfaceStart (AE ID 82084) for color/motion effects before the HUD.
-HDR bloom hooks the main cinematic tone-mapping call at ID 105674 + 0x178 and
-validates its original target (105676). It modifies the HDR source passed by
-that call, preserving the native tone mapper and built-in bloom.
+CGE selects SE or AE IDs and field layouts from the executable version.
+DrawInterfaceStart uses SE ID 79947 or AE ID 82084. Its trampoline copies only
+whole supported prologue instructions; relative or unsupported instructions and
+pre-existing branch hooks are refused. No arbitrary byte sequence is relocated.
+
+HDR uses SE ID 99023 at +0x1EA and +0x230, or AE ID 105674 at +0x178.
+Call arguments, executable target ownership and supported target prologues are
+checked before patching. AE also validates the target against ID 105676.
+SE validates both sites before installing either. Effects modify the native HDR
+source, preserving the tone mapper and built-in bloom.
 
 Environment and clock readers use bounded field copies.
 Motion resource adapters validate native d3d11.dll COM ownership, formats,
@@ -55,6 +61,7 @@ reference mod implementation linked into CGE.
 References:
 https://github.com/ianpatt/skse64/blob/master/skse64/PluginAPI.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/REL/IDDB.h
+https://github.com/alandtse/CommonLibVR/blob/ng/src/REL/IDDB.cpp
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/Renderer.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/R/RenderTargetData.h
 https://github.com/alandtse/CommonLibVR/blob/ng/include/RE/I/ImageSpaceManager.h
@@ -71,10 +78,11 @@ Neither component is installed or included in the mod archive.
 ## Distance fog (0.5.0)
 
 No new external dependency is required. The fog pass uses native main-depth SRV
-at Renderer + 0x20A0 independently of the motion blur/TAA adapter.
+at Renderer + 0x2040 before 1.6.1130, or +0x20A0 from 1.6.1130 onward,
+independently of the motion blur/TAA adapter.
 
-The world-root singleton is Address Library ID 403513. Its camera is at +0x128.
-CGE validates WorldRootCamera (ID 36609) against this access path before enabling
+The world-root singleton is SE ID 517006 / AE ID 403513. Its camera is at +0x128.
+CGE validates WorldRootCamera (SE ID 35601 / AE ID 36609) against this access path before enabling
 the adapter. NiCamera near/far values at +0x160/+0x164 and the orthographic flag
 at +0x168 are read through bounded copies and checked for validity.
 The getter and frustum-copy offsets were checked on the installed 1.7.104 executable.
@@ -155,3 +163,29 @@ alpha, bounded output, neutral colors, black/white edges, render-resolution
 scaling and state restoration. Settings and framework tests cover profile
 selection, numeric input, persistence, inheritance, reset isolation and the
 native scene/HUD boundary. In-game appearance and GPU timing remain to be checked.
+
+
+## Runtime adapters (0.6.0)
+
+runtime.h contains the explicit executable allowlist, versioned library filename,
+relocation IDs, render-target bounds and field offsets. Unknown builds, VR and
+classic Skyrim are refused. Matching Address Library headers are mandatory;
+CGE does not try a different version's table when its own file is missing.
+
+address_library.cpp reads V1 and V2 sparse delta encodings and the V5 dense
+table. Input length, counts, name, version, pointer width, arithmetic overflow,
+duplicate IDs and final file position are checked. The parsed table is cached
+during initialization. Game addresses must remain inside readable executable
+memory; hook targets must also belong to executable code in the game module.
+
+SKSEPlugin_Query remains exported for older SKSE64 releases. The AE metadata
+contains the explicit AE allowlist and V5 encoding flag. CGE does not read the
+optional GetPluginInfo tail of the SKSE interface or pin a particular SKSE
+package version. The installed SKSE itself must match the game executable.
+UI registration accepts the required messaging V1 prefix without reading later
+fields, and checks framework exports separately. A guard-page test verifies that
+the optional SKSE interface tail is not accessed.
+
+The project's distribution contains no Address Library tables or reference-mod
+code. Installed library checks run against read-only local files and are not
+required for the portable automated test suite.

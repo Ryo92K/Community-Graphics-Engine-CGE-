@@ -1,11 +1,12 @@
 #pragma once
 #include <cstddef>
+#include "runtime.h"
 #include <cstdint>
                                                            
                                                                                              
 namespace cge::skse {
 constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
-constexpr std::uint32_t Version=(5u<<16)|(2u<<4);
+constexpr std::uint32_t Version=(6u<<16);
 struct Interface {
     std::uint32_t skseVersion,runtimeVersion,editorVersion,isEditor;
     void* (*queryInterface)(std::uint32_t){};
@@ -35,6 +36,6 @@ static_assert(sizeof(Metadata)==848);
 static_assert(offsetof(Metadata,versionIndependenceEx)==772);
 static_assert(offsetof(Metadata,compatibleVersions)==780);
 inline bool Compatible(const Interface* api) noexcept {
-    return api && !api->isEditor && api->runtimeVersion==Runtime;
+    return api && !api->isEditor && (api->skseVersion>>24)==2 && runtime::Select(api->runtimeVersion).has_value();
 }
 }

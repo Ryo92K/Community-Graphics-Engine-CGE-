@@ -1,4 +1,7 @@
 #include "startup_hook.h"
+#include "address_library.h"
+#include "prologue.h"
+#include <vector>
 #include <cstring>
 #include <mutex>
 #include <fstream>
@@ -21,10 +24,7 @@ const void *uiSingleton{},*imageSpaceSingleton{};
 const unsigned char* depthNativeRenderer{};
 const void* worldRootSingleton{};
 unsigned char* interfaceEntry{};
-constexpr std::array<unsigned char,15> interfacePrologue={
-    0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50
-};
-std::array<unsigned char,15> interfacePatch{};
+std::vector<unsigned char> interfaceOriginal,interfacePatch;
 void Interface(std::int64_t manager) {
     beforeInterface();
     drawInterface(manager);
@@ -81,36 +81,50 @@ bool HookCreation(HMODULE executable,PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN repl
     return false;
 }
 namespace {
-unsigned char* ResolveV5(HMODULE executable,const std::filesystem::path& library,
-    std::uint32_t id,std::size_t bytes,std::string& error) {
-                                                                            
-                                                                        
-    std::ifstream input(library,std::ios::binary|std::ios::ate);
-    if(!input){error="Address Library V5 missing; install the 1.7.104 library through the mod manager";return nullptr;}
-    const auto length=input.tellg();input.seekg(0);
-    std::array<std::uint32_t,24> header{};
-    if(!input.read(reinterpret_cast<char*>(header.data()),sizeof(header)) ||
-        header[0]!=5 || header[1]!=1 || header[2]!=7 || header[3]!=104 || header[4]!=0 ||
-        memcmp(reinterpret_cast<const char*>(header.data())+20,"SkyrimSE.exe",12) ||
-        header[21]!=8 || header[23]<=id || length!=std::streamoff(96ull+4ull*header[23])) {
-        error="Invalid or incompatible Address Library V5 header";return nullptr;
+AddressLibrary addresses;
+std::filesystem::path addressPath;
+std::uint32_t addressRuntime{};
+bool MappedSpan(const void* entry,std::size_t bytes,bool executable) {
+    auto cursor=reinterpret_cast<std::uintptr_t>(entry);
+    if(!cursor || !bytes || cursor>UINTPTR_MAX-bytes)return false;
+    const auto end=cursor+bytes;
+    while(cursor<end) {
+        MEMORY_BASIC_INFORMATION region{};
+        if(!VirtualQuery(reinterpret_cast<void*>(cursor),&region,sizeof(region)) || region.State!=MEM_COMMIT ||
+            (region.Protect&(PAGE_GUARD|PAGE_NOACCESS)) ||
+            !(region.Protect&(PAGE_READONLY|PAGE_READWRITE|PAGE_WRITECOPY|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) ||
+            (executable && !(region.Protect&(PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY))))return false;
+        const auto base=reinterpret_cast<std::uintptr_t>(region.BaseAddress);
+        if(region.RegionSize>UINTPTR_MAX-base || base+region.RegionSize<=cursor)return false;
+        cursor=base+region.RegionSize;
     }
-    std::uint32_t offset{};input.seekg(96ull+4ull*id);
-    if(!input.read(reinterpret_cast<char*>(&offset),sizeof(offset)) || !offset || !executable) {
-        error="Requested Address Library entry unavailable";return nullptr;
+    return true;
+}
+unsigned char* Resolve(HMODULE executable,const std::filesystem::path& library,
+    runtime::Address key,std::size_t bytes,std::string& error) {
+    const auto& layout=runtime::selected;
+    if(addressPath!=library || addressRuntime!=layout.version) {
+        addressPath.clear();addressRuntime=0;
+        if(!addresses.Load(library,layout,error))return nullptr;
+        addressPath=library;addressRuntime=layout.version;
     }
+    const auto offset=addresses.Offset(layout.Id(key));
+    if(!offset || !executable){error="Requested Address Library entry unavailable";return nullptr;}
     auto* base=reinterpret_cast<unsigned char*>(executable);
     auto* dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     if(dos->e_magic!=IMAGE_DOS_SIGNATURE || dos->e_lfanew<=0 || dos->e_lfanew>1024*1024) {
-        error="Invalid interface hook module";return nullptr;
+        error="Invalid hook module";return nullptr;
     }
     auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+dos->e_lfanew);
     if(nt->Signature!=IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
         offset>=nt->OptionalHeader.SizeOfImage || bytes>nt->OptionalHeader.SizeOfImage-offset) {
         error="Requested address outside executable";return nullptr;
     }
-    return base+offset;
+    auto* result=base+offset;
+    if(!MappedSpan(result,bytes,false)){error="Requested address is not readable";return nullptr;}
+    return result;
 }
+bool ExecutableSpan(const void* entry,std::size_t bytes) {return MappedSpan(entry,bytes,true);}
 bool ReadMemory(const void* source,void* target,std::size_t size) noexcept {
     SIZE_T bytes{};
     return source && ReadProcessMemory(GetCurrentProcess(),source,target,size,&bytes) && bytes==size;
@@ -132,9 +146,9 @@ bool AcquireNativeView(void* address,ID3D11ShaderResourceView** output) noexcept
 }
 }
 bool InitializeMotion(HMODULE executable,const std::filesystem::path& library,std::string& error) {
-    auto* renderer=ResolveV5(executable,library,411393,0x20a8,error);
-    auto* ui=ResolveV5(executable,library,400327,sizeof(void*),error);
-    auto* manager=ResolveV5(executable,library,414660,sizeof(void*),error);
+    auto* renderer=Resolve(executable,library,runtime::Address::Renderer,runtime::selected.depthView+8,error);
+    auto* ui=Resolve(executable,library,runtime::Address::UI,sizeof(void*),error);
+    auto* manager=Resolve(executable,library,runtime::Address::ImageSpace,sizeof(void*),error);
     if(!renderer || !ui || !manager)return false;
     nativeRenderer=renderer;uiSingleton=ui;imageSpaceSingleton=manager;return true;
 }
@@ -147,13 +161,13 @@ MotionInputs PollMotion() noexcept {
         !ReadMemory(ui+0x160,&pauses,sizeof(pauses)))return result;
     if(pauses){result.state=MotionState::Paused;return result;}
     if(!ReadMemory(imageSpaceSingleton,&manager,sizeof(manager)) || !manager ||
-        !ReadMemory(manager+0x1f0,&temporal,sizeof(temporal)) || !temporal ||
+        !ReadMemory(manager+runtime::selected.temporal,&temporal,sizeof(temporal)) || !temporal ||
         !ReadMemory(temporal+0x18,&taa,sizeof(taa)))return result;
     if(taa!=1){result.state=MotionState::TaaDisabled;return result;}
     void *velocity{},*depth{};
                                                                                      
-    if(!ReadMemory(nativeRenderer+0xbc0,&velocity,sizeof(velocity)) ||
-        !ReadMemory(nativeRenderer+0x20a0,&depth,sizeof(depth)))return result;
+    if(!ReadMemory(nativeRenderer+runtime::selected.renderTargets+7*0x30+0x18,&velocity,sizeof(velocity)) ||
+        !ReadMemory(nativeRenderer+runtime::selected.depthView,&depth,sizeof(depth)))return result;
     ID3D11ShaderResourceView *v{},*d{};
     if(!AcquireNativeView(velocity,&v))return result;
     result.velocity.Attach(v);
@@ -161,15 +175,15 @@ MotionInputs PollMotion() noexcept {
     result.depth.Attach(d);result.state=MotionState::Ready;return result;
 }
 bool InitializeDepth(HMODULE executable,const std::filesystem::path& library,std::string& error) {
-    auto* renderer=ResolveV5(executable,library,411393,0x20a8,error);
-    auto* worldRoot=ResolveV5(executable,library,403513,sizeof(void*),error);
-    auto* getter=ResolveV5(executable,library,36609,15,error);
+    auto* renderer=Resolve(executable,library,runtime::Address::Renderer,runtime::selected.depthView+8,error);
+    auto* worldRoot=Resolve(executable,library,runtime::Address::WorldRoot,sizeof(void*),error);
+    auto* getter=Resolve(executable,library,runtime::Address::CameraGetter,15,error);
     if(!renderer || !worldRoot || !getter)return false;
                                                                                      
     constexpr unsigned char load[]={0x48,0x8b,0x05};
     constexpr unsigned char tail[]={0x48,0x8b,0x80,0x28,0x01,0,0,0xc3};
     std::int32_t displacement{};memcpy(&displacement,getter+3,4);
-    if(memcmp(getter,load,sizeof(load)) || memcmp(getter+7,tail,sizeof(tail)) ||
+    if(!ExecutableSpan(getter,15) || memcmp(getter,load,sizeof(load)) || memcmp(getter+7,tail,sizeof(tail)) ||
         getter+7+displacement!=worldRoot) {
         error="World camera accessor differs; depth effects disabled";return false;
     }
@@ -182,23 +196,23 @@ DepthInputs PollDepth() noexcept {
     float planes[2]{};unsigned char orthographic{};
                                                                                   
     if(!ReadMemory(worldRootSingleton,&root,sizeof(root)) || !root ||
-        !ReadMemory(root+0x128,&camera,sizeof(camera)) || !camera ||
-        !ReadMemory(camera+0x160,planes,sizeof(planes)) ||
-        !ReadMemory(camera+0x168,&orthographic,sizeof(orthographic)) || orthographic ||
+        !ReadMemory(root+runtime::selected.camera,&camera,sizeof(camera)) || !camera ||
+        !ReadMemory(camera+runtime::selected.frustum+0x10,planes,sizeof(planes)) ||
+        !ReadMemory(camera+runtime::selected.frustum+0x18,&orthographic,sizeof(orthographic)) || orthographic ||
         !ValidDepthProjection(planes[0],planes[1]) ||
-        !ReadMemory(root+0x128,&sameCamera,sizeof(sameCamera)) || sameCamera!=camera ||
+        !ReadMemory(root+runtime::selected.camera,&sameCamera,sizeof(sameCamera)) || sameCamera!=camera ||
         !ReadMemory(worldRootSingleton,&sameRoot,sizeof(sameRoot)) || sameRoot!=root) {
         result.state=DepthState::CameraUnavailable;return result;
     }
     result.nearPlane=planes[0];result.farPlane=planes[1];
     void* raw{};
-    if(!ReadMemory(depthNativeRenderer+0x20a0,&raw,sizeof(raw)))return result;
+    if(!ReadMemory(depthNativeRenderer+runtime::selected.depthView,&raw,sizeof(raw)))return result;
     ID3D11ShaderResourceView* view{};
     if(!AcquireNativeView(raw,&view))return result;
     result.depth.Attach(view);result.state=DepthState::Ready;return result;
 }
 bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& library,std::string& error) {
-    auto* address=ResolveV5(executable,library,403521,sizeof(void*),error);
+    auto* address=Resolve(executable,library,runtime::Address::Player,sizeof(void*),error);
     if(!address)return false;
     MEMORY_BASIC_INFORMATION region{};
     if(!VirtualQuery(address,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
@@ -209,7 +223,7 @@ bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& libra
     playerSingleton=address;return true;
 }
 bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std::string& error) {
-    auto* address=ResolveV5(executable,library,400447,sizeof(void*),error);
+    auto* address=Resolve(executable,library,runtime::Address::Calendar,sizeof(void*),error);
     if(!address)return false;
     MEMORY_BASIC_INFORMATION region{};
     if(!VirtualQuery(address,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
@@ -247,28 +261,23 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     std::lock_guard lock(mutex);
     if(interfaceEntry)return true;
     if(!before){error="Missing interface callback";return false;}
-    auto* entry=ResolveV5(executable,library,82084,interfacePrologue.size(),error);
+    auto* entry=Resolve(executable,library,runtime::Address::Interface,32,error);
     if(!entry)return false;
-    MEMORY_BASIC_INFORMATION region{};
-    if(!VirtualQuery(entry,&region,sizeof(region)) || region.State!=MEM_COMMIT ||
-        reinterpret_cast<std::uintptr_t>(entry)+interfacePrologue.size()>
-            reinterpret_cast<std::uintptr_t>(region.BaseAddress)+region.RegionSize ||
-        !(region.Protect&(PAGE_EXECUTE|PAGE_EXECUTE_READ|PAGE_EXECUTE_READWRITE|PAGE_EXECUTE_WRITECOPY)) ||
-        memcmp(entry,interfacePrologue.data(),interfacePrologue.size())) {
-        error="Interface prologue differs or another plugin already hooks it; scene effects disabled";return false;
+    const auto length=ExecutableSpan(entry,32)?PrologueLength({entry,32}):0;
+    if(!length) {
+        error="Interface prologue is unsupported or already hooked; scene effects disabled";return false;
     }
-                                                                             
-                                                                              
+    interfaceOriginal.assign(entry,entry+length);
     auto* relay=static_cast<unsigned char*>(VirtualAlloc(nullptr,64,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
     if(!relay){error="Interface relay allocation failed";return false;}
-    memcpy(relay,entry,interfacePrologue.size());
-    AbsoluteJump(relay+interfacePrologue.size(),entry+interfacePrologue.size());
+    memcpy(relay,entry,length);
+    AbsoluteJump(relay+length,entry+length);
     DWORD old{};
     if(!VirtualProtect(relay,64,PAGE_EXECUTE_READ,&old)){
         VirtualFree(relay,0,MEM_RELEASE);error="Interface relay protection failed";return false;
     }
     FlushInstructionCache(GetCurrentProcess(),relay,64);
-    interfacePatch.fill(0x90);AbsoluteJump(interfacePatch.data(),reinterpret_cast<const void*>(Interface));
+    interfacePatch.assign(length,0x90);AbsoluteJump(interfacePatch.data(),reinterpret_cast<const void*>(Interface));
     DWORD protection{};
     if(!VirtualProtect(entry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)){
         VirtualFree(relay,0,MEM_RELEASE);error="Interface entry cannot be patched";return false;
@@ -286,11 +295,16 @@ ImageSpaceDraw imageSpaceDraw{};
 void(*beforeTonemap)(ID3D11ShaderResourceView*) noexcept{};
 const unsigned char* bloomRenderer{};
 unsigned char* tonemapCall{};
-std::array<unsigned char,5> tonemapOriginal{},tonemapPatch{};
+struct CallPatch {
+    unsigned char* call{};
+    unsigned char* relay{};
+    std::array<unsigned char,5> original{},patch{};
+};
+std::vector<CallPatch> hdrPatches;
 void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
                                                                         
     void* raw{};
-    if(source<114 && ReadMemory(bloomRenderer+0xa58+std::size_t(source)*0x30+0x18,&raw,sizeof(raw))) {
+    if(source<runtime::selected.targetCount && ReadMemory(bloomRenderer+runtime::selected.renderTargets+std::size_t(source)*0x30+0x18,&raw,sizeof(raw))) {
         ID3D11ShaderResourceView* view{};
         if(AcquireNativeView(raw,&view)) {
             beforeTonemap(view);view->Release();
@@ -320,50 +334,75 @@ bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
     std::lock_guard lock(mutex);
     if(tonemapCall)return true;
     if(!before){error="Missing HDR callback";return false;}
-    auto* main=ResolveV5(executable,library,105674,0x17d,error);
-    auto* draw=ResolveV5(executable,library,105676,14,error);
-    auto* renderer=ResolveV5(executable,library,411393,0x2018,error);
-    if(!main || !draw || !renderer)return false;
-    constexpr unsigned char prologue[]={0x4c,0x8b,0xdc,0x55,0x56,0x57,0x41,0x56,0x41,0x57,0x48,0x83,0xec,0x70};
-    constexpr unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
-    auto* call=main+0x178;
-    std::int32_t displacement{};
-    if(call[0]!=0xe8 || memcmp(main+0x170,arguments,sizeof(arguments)) || memcmp(draw,prologue,sizeof(prologue))) {
-        error="HDR call signature differs or is already hooked; bloom disabled";return false;
+    const auto& layout=runtime::selected;
+    const unsigned span=layout.tonemapCalls[layout.callCount-1]+5;
+    auto* main=Resolve(executable,library,runtime::Address::Tonemap,span,error);
+    auto* renderer=Resolve(executable,library,runtime::Address::Renderer,layout.depthView+8,error);
+    if(!main || !renderer || !ExecutableSpan(main,span))return false;
+    std::vector<CallPatch> pending;
+    unsigned char* draw{};
+    for(unsigned i=0;i<layout.callCount;++i) {
+        auto* call=main+layout.tonemapCalls[i];
+        constexpr unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
+        if(call[0]!=0xe8 || memcmp(call-8,arguments,sizeof(arguments))) {
+            error="HDR call signature differs or is already hooked; HDR effects disabled";return false;
+        }
+        std::int32_t displacement{};memcpy(&displacement,call+1,4);
+        auto* target=call+5+displacement;
+        HMODULE owner{};
+        if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable ||
+            !ExecutableSpan(target,32) || !PrologueLength({target,32}) || (draw && draw!=target)) {
+            error="Unexpected HDR call target; HDR effects disabled";return false;
+        }
+        draw=target;
+        if(layout.Id(runtime::Address::Draw)) {
+            auto* expected=Resolve(executable,library,runtime::Address::Draw,32,error);
+            if(!expected || draw!=expected){error="HDR target does not match Address Library";return false;}
+        }
+        CallPatch item;item.call=call;memcpy(item.original.data(),call,5);pending.push_back(item);
     }
-    memcpy(&displacement,call+1,4);
-    if(call+5+displacement!=draw){error="Unexpected HDR call target; bloom disabled";return false;}
-    auto* relay=NearRelay(call);
-    if(!relay){error="HDR relay allocation failed";return false;}
-    AbsoluteJump(relay,reinterpret_cast<const void*>(Tonemap));
-    DWORD prior{};
-    if(!VirtualProtect(relay,64,PAGE_EXECUTE_READ,&prior)) {
-        VirtualFree(relay,0,MEM_RELEASE);error="HDR relay protection failed";return false;
+    auto discard=[&] {
+        for(auto& item:pending) {
+            if(item.call && item.patch[0] && !memcmp(item.call,item.patch.data(),5)) {
+                DWORD old{},ignored{};
+                if(VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&old)) {
+                    memcpy(item.call,item.original.data(),5);VirtualProtect(item.call,5,old,&ignored);
+                    FlushInstructionCache(GetCurrentProcess(),item.call,5);
+                }
+            }
+            if(item.relay)VirtualFree(item.relay,0,MEM_RELEASE);
+        }
+    };
+    for(auto& item:pending) {
+        item.relay=NearRelay(item.call);
+        if(!item.relay){discard();error="HDR relay allocation failed";return false;}
+        AbsoluteJump(item.relay,reinterpret_cast<const void*>(Tonemap));
+        DWORD old{};
+        if(!VirtualProtect(item.relay,64,PAGE_EXECUTE_READ,&old)){discard();error="HDR relay protection failed";return false;}
+        FlushInstructionCache(GetCurrentProcess(),item.relay,64);
+        const auto delta=reinterpret_cast<std::intptr_t>(item.relay)-reinterpret_cast<std::intptr_t>(item.call+5);
+        if(delta<INT32_MIN || delta>INT32_MAX){discard();error="HDR relay outside branch range";return false;}
+        item.patch[0]=0xe8;const auto displacement=static_cast<std::int32_t>(delta);memcpy(item.patch.data()+1,&displacement,4);
     }
-    FlushInstructionCache(GetCurrentProcess(),relay,64);
-    const auto relative=reinterpret_cast<std::intptr_t>(relay)-reinterpret_cast<std::intptr_t>(call+5);
-    if(relative<INT32_MIN || relative>INT32_MAX) {
-        VirtualFree(relay,0,MEM_RELEASE);error="HDR relay outside branch range";return false;
-    }
-    tonemapPatch[0]=0xe8;displacement=static_cast<std::int32_t>(relative);
-    memcpy(tonemapPatch.data()+1,&displacement,4);
-    DWORD protection{};
-    if(!VirtualProtect(call,5,PAGE_EXECUTE_READWRITE,&protection)) {
-        VirtualFree(relay,0,MEM_RELEASE);error="HDR call cannot be patched";return false;
-    }
-    memcpy(tonemapOriginal.data(),call,5);
     imageSpaceDraw=reinterpret_cast<ImageSpaceDraw>(draw);beforeTonemap=before;bloomRenderer=renderer;
-    memcpy(call,tonemapPatch.data(),5);
-    DWORD ignored{};VirtualProtect(call,5,protection,&ignored);FlushInstructionCache(GetCurrentProcess(),call,5);
-    tonemapCall=call;return true;
+    for(auto& item:pending) {
+        DWORD protection{},ignored{};
+        if(!VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&protection)){discard();error="HDR call cannot be patched";return false;}
+        memcpy(item.call,item.patch.data(),5);VirtualProtect(item.call,5,protection,&ignored);
+        FlushInstructionCache(GetCurrentProcess(),item.call,5);
+    }
+    hdrPatches=std::move(pending);tonemapCall=hdrPatches.front().call;return true;
 }
+
 void Shutdown() noexcept {
-    if(tonemapCall && !memcmp(tonemapCall,tonemapPatch.data(),5)) {
-        DWORD protection{};
-        if(VirtualProtect(tonemapCall,5,PAGE_EXECUTE_READWRITE,&protection)) {
-            memcpy(tonemapCall,tonemapOriginal.data(),5);
-            DWORD ignored{};VirtualProtect(tonemapCall,5,protection,&ignored);
-            FlushInstructionCache(GetCurrentProcess(),tonemapCall,5);
+    for(const auto& item:hdrPatches) {
+        if(item.call && !memcmp(item.call,item.patch.data(),5)) {
+            DWORD protection{},ignored{};
+            if(VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&protection)) {
+                memcpy(item.call,item.original.data(),5);VirtualProtect(item.call,5,protection,&ignored);
+                FlushInstructionCache(GetCurrentProcess(),item.call,5);
+            }
         }
     }
     depthNativeRenderer=nullptr;worldRootSingleton=nullptr;
@@ -371,7 +410,7 @@ void Shutdown() noexcept {
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};
         if(VirtualProtect(interfaceEntry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)) {
-            memcpy(interfaceEntry,interfacePrologue.data(),interfacePrologue.size());
+            memcpy(interfaceEntry,interfaceOriginal.data(),interfaceOriginal.size());
             DWORD ignored{};VirtualProtect(interfaceEntry,interfacePatch.size(),protection,&ignored);
             FlushInstructionCache(GetCurrentProcess(),interfaceEntry,interfacePatch.size());
         }
