@@ -35,7 +35,8 @@ class ProfileTransition {
                 mix(a.fog.enabled?a.fog.density:0,b.fog.enabled?b.fog.density:0),
                 mix(a.fog.startDistance,b.fog.startDistance)},
             {a.dof.enabled || b.dof.enabled,mix(a.dof.focusDistance,b.dof.focusDistance),
-                mix(a.dof.enabled?a.dof.strength:0,b.dof.enabled?b.dof.strength:0)},
+                mix(a.dof.enabled?a.dof.strength:0,b.dof.enabled?b.dof.strength:0),
+                t<0.5f?a.dof.autofocus:b.dof.autofocus,mix(a.dof.focusSpeed,b.dof.focusSpeed),mix(a.dof.focusRadius,b.dof.focusRadius)},
             {a.clarity.enabled || b.clarity.enabled,
                 mix(a.clarity.enabled?a.clarity.strength:0,b.clarity.enabled?b.clarity.strength:0)},
             {a.vibrance.enabled || b.vibrance.enabled,
@@ -50,7 +51,10 @@ class ProfileTransition {
                 mix(a.splitToning.highlightRed,b.splitToning.highlightRed),mix(a.splitToning.highlightGreen,b.splitToning.highlightGreen),mix(a.splitToning.highlightBlue,b.splitToning.highlightBlue)},
             {a.chromaticAberration.enabled || b.chromaticAberration.enabled,
                 mix(a.chromaticAberration.enabled?a.chromaticAberration.strength:0,b.chromaticAberration.enabled?b.chromaticAberration.strength:0),
-                mix(a.chromaticAberration.radius,b.chromaticAberration.radius)}};
+                mix(a.chromaticAberration.radius,b.chromaticAberration.radius)},
+            {a.debanding.enabled || b.debanding.enabled,
+                mix(a.debanding.enabled?a.debanding.strength:0,b.debanding.enabled?b.debanding.strength:0),
+                mix(a.debanding.radius,b.debanding.radius)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

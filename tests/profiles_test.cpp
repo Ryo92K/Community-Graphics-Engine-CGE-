@@ -113,5 +113,15 @@ int main() {
         Check(Near(half.filmGrain.size,2) && Near(half.splitToning.shadowRed,0.5f),"Grain size and palette transition smoothly");
         Check(transition.Update(finishing,Environment::Interior,1,12).Neutral(),"Disabled finishing profile reaches neutral output");
     }
+    {
+        Settings focus;focus.dof={true,1500,0.5f,false,2,0.02f};focus.debanding={true,0.8f,4};
+        focus.SetSeparateProfiles(true);focus.exteriorNight.dof.autofocus=true;
+        focus.exteriorNight.dof.focusSpeed=8;focus.exteriorNight.dof.focusRadius=0.1f;
+        focus.exteriorNight.debanding.strength=0.2f;focus.exteriorNight.debanding.radius=8;
+        focus.transitionSeconds=0;ProfileTransition blend;
+        const auto dusk=blend.Update(focus,Environment::Exterior,0,20);
+        Check(dusk.dof.autofocus && Near(dusk.dof.focusSpeed,5) && Near(dusk.dof.focusRadius,0.06f),"Autofocus mode and parameters blend at dusk");
+        Check(Near(dusk.debanding.strength,0.5f) && Near(dusk.debanding.radius,6),"Debanding settings blend at dusk");
+    }
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

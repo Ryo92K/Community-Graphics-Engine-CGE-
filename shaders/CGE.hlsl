@@ -20,6 +20,7 @@ cbuffer CgeColorControls : register(b0) {
     float4 CgeShadows;
     float4 CgeHighlights;
     float4 CgeAberration;
+    float4 CgeDebanding;
 };
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
@@ -27,6 +28,33 @@ float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
 }
 float3 ReadNeighbor(int2 pixel,int2 size) {
     return CgeInput.Load(int3(clamp(pixel,int2(0,0),size-1),0)).rgb;
+}
+float3 DebandSource(float3 center,int2 pixel,int2 size) {
+    if(pixel.x<=0 || pixel.y<=0 || pixel.x>=size.x-1 || pixel.y>=size.y-1)return center;
+    float3 left=ReadNeighbor(pixel+int2(-1,0),size)-center;
+    float3 right=ReadNeighbor(pixel+int2(1,0),size)-center;
+    float3 up=ReadNeighbor(pixel+int2(0,-1),size)-center;
+    float3 down=ReadNeighbor(pixel+int2(0,1),size)-center;
+    if(dot(left,right)>0.00001 || dot(up,down)>0.00001)return center;
+    float3 sum=center*2;float weight=2,maxDifference=0;
+    const int radius=max(1,int(round(CgeDebanding.y)));
+    const int diagonal=max(1,int(round(CgeDebanding.y*0.70710678)));
+    const int2 directions[4]={int2(radius,0),int2(0,radius),int2(diagonal,diagonal),int2(diagonal,-diagonal)};
+    [unroll]for(int i=0;i<4;++i) {
+        float3 a=ReadNeighbor(pixel+directions[i],size),b=ReadNeighbor(pixel-directions[i],size);
+        float3 da=a-center,db=b-center;
+        float difference=max(max(abs(da.r),max(abs(da.g),abs(da.b))),max(abs(db.r),max(abs(db.g),abs(db.b))));
+        if(difference>0.025)return center;
+        maxDifference=max(maxDifference,difference);
+        if(dot(da,db)>0.00001)continue;
+        sum+=a+b;weight+=2;
+    }
+    if(weight<=2 || maxDifference<0.000001)return center;
+    float3 result=lerp(center,sum/weight,CgeDebanding.x);
+    uint hash=uint(pixel.x)*1973u+uint(pixel.y)*9277u+89173u;
+    hash=(hash^(hash>>13))*1274126177u;hash^=hash>>16;
+    float dither=(float(hash&65535u)/65535.0-0.5)/255.0;
+    return saturate(result+dither*CgeDebanding.x);
 }
 float3 ApplyClarity(float3 color,int2 pixel,int2 size) {
     const float3 lumaWeights=float3(0.2126,0.7152,0.0722);
@@ -114,11 +142,12 @@ float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     int2 pixel=int2(position.xy),size=int2(width,height);
     float4 source=CgeInput.Load(int3(pixel,0));
     float3 color=source.rgb;
-    if(CgeClarity>0)color=ApplyClarity(color,pixel,size);
+    [branch]if(CgeDebanding.x>0)color=DebandSource(source.rgb,pixel,size);
+    if(CgeClarity>0)color+=ApplyClarity(source.rgb,pixel,size)-source.rgb;
     if(CgeSharpen>0) {
         float3 neighbors=ReadNeighbor(pixel+int2(-1,0),size)+ReadNeighbor(pixel+int2(1,0),size)
             +ReadNeighbor(pixel+int2(0,-1),size)+ReadNeighbor(pixel+int2(0,1),size);
-        color+=CgeSharpen*(color-neighbors*0.25);
+        color+=CgeSharpen*(source.rgb-neighbors*0.25);
     }
     if(CgeAberration.x>0 && CgeAberration.y<1)color+=AberratedSource(source.rgb,position.xy,size)-source.rgb;
     color*=exp2(CgeExposureStops);

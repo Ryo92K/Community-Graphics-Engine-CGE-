@@ -16,7 +16,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers fourteen pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers fifteen pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -280,3 +280,50 @@ stationary and moving motion filtering, fixed-tick combinations, profile
 persistence and transitions, disabled controls, resets, native scene edges,
 HUD preservation and exact preset export/reload. In-game appearance and GPU
 timings remain to be checked.
+
+
+## Autofocus and Debanding (0.6.3)
+
+Depth of Field retains manual mode by default. Autofocus uses the already
+validated native depth input. A 1x1 GPU pass samples a 5 by 5 central grid,
+discards non-finite, invalid and sky depths, and selects the median of at least
+five valid samples. With fewer valid samples it retains the previous distance.
+The initial fallback is the manual Focus Distance, restricted to 1..50000 units.
+
+Two R32_FLOAT 1x1 surfaces hold the previous and next focus. Each update uses
+1 - exp(-deltaSeconds * FocusSpeed), with delta clamped to 0..0.1 seconds.
+There is no production CPU readback, Map, flush or synchronization query.
+The DOF shader reads the current focus surface. Resource creation is deferred
+until automatic mode is used. Disabling DOF releases focus state; manual mode,
+resize and environment transitions reset initialization as appropriate.
+FocusTexture exposes a borrowed resource for GPU regression readback only.
+
+Focus Speed ranges from 0.1 to 20, default 5. Focus Area ranges from 0 to 0.2,
+default 0.03, as a radius relative to the shorter render dimension.
+Zero area samples the center pixel; a larger median zone limits tiny outliers.
+Manual focus is grayed in Auto; speed and area are grayed in Manual.
+Autofocus, FocusSpeed and FocusRadius are saved under DepthOfField.
+Profiles use DofAutofocus, DofFocusSpeed and DofFocusRadius. Mode switches at
+the midpoint of profile blending; speed, area and manual fallback interpolate.
+Soft Focus and the other presets retain manual focus.
+
+Debanding shares the pre-HUD SDR color pass and needs no depth or TAA.
+Strength ranges from 0 to 1, default 0.5; Radius from 1 to 16 render pixels,
+default 4. It starts disabled in existing configurations and all presets.
+DebandingEnabled, DebandingStrength and DebandingRadius are its profile keys.
+
+The filter rejects local texture extrema, high-contrast neighborhoods and the
+outermost image border. Four opposing sample pairs smooth accepted low-contrast
+gradients, followed by stable sub-LSB monochrome dithering. The rejection
+threshold is 0.025 in normalized RGB. It uses at most twelve source texture reads,
+adds no render target, and skips the filter when disabled or at zero strength.
+It filters existing SDR input before grading; extreme subsequent grading can
+still create banding. This is conservative smoothing, not lost-detail recovery.
+
+The color constant buffer is now 160 bytes. The DOF buffer remains 32 bytes.
+No native hooks, external libraries or executable adapters changed.
+51 automated tests include GPU focus tracking, frame-rate-independent smoothing,
+sky/invalid input, sparse zones, tiny foreground objects, focus speed, actual
+DOF output, manual restoration, gradient intermediates, stable dither, radius,
+fine texture, hard edges, alpha, HUD, settings, profiles and disabled controls.
+In-game appearance, focus behavior and GPU cost remain to be validated.

@@ -248,7 +248,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?14u:0u),"Validate API before registering exactly fourteen pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?15u:0u),"Validate API before registering exactly fifteen pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -531,12 +531,14 @@ int wmain(int argc,wchar_t** argv) {
         const char* grain="Community Graphics Engine/Effects/Film Grain";
         const char* split="Community Graphics Engine/Effects/Split Toning";
         const char* aberration="Community Graphics Engine/Effects/Chromatic Aberration";
+        const char* debanding="Community Graphics Engine/Effects/Debanding";
         const DisabledCase cases[]={
             {bloom,"Bloom enabled","Intensity","Reset Bloom",[](const cge::Settings& s){return s.bloom.intensity;}},
             {fog,"Fog enabled","Density","Reset Fog",[](const cge::Settings& s){return s.fog.density;}},
             {dof,"Depth of field enabled","Blur Strength","Reset Depth of Field",[](const cge::Settings& s){return s.dof.strength;}},
             {clarity,"Clarity enabled","Strength","Reset Clarity",[](const cge::Settings& s){return s.clarity.strength;}},
             {vibrance,"Vibrance enabled","Strength","Reset Vibrance",[](const cge::Settings& s){return s.vibrance.strength;}},
+            {debanding,"Debanding enabled","Strength","Reset Debanding",[](const cge::Settings& s){return s.debanding.strength;}},
             {vignette,"Vignette enabled","Strength","Reset Vignette",[](const cge::Settings& s){return s.vignette.strength;}},
             {grain,"Film Grain enabled","Strength","Reset Film Grain",[](const cge::Settings& s){return s.filmGrain.strength;}},
             {split,"Split Toning enabled","Strength","Reset Split Toning",[](const cge::Settings& s){return s.splitToning.strength;}},
@@ -581,6 +583,19 @@ int wmain(int argc,wchar_t** argv) {
             controlDisabled(5,"Strong")==1,"Motion quality and shortcuts disabled with effect");
         edit(motion,4,"Quality",0);edit(motion,5,"Strong",0);edit(motion,5,"Save",0);
         Check(!cge::Settings::Load(config).motion.enabled && cge::Settings::Load(config).motion.samples==12,"Inactive motion shortcuts cannot activate or change the effect");
+        edit(dof,1,"Depth of field enabled",1);edit(dof,4,"Focus Mode",1);
+        Check(controlDisabled(3,"Focus Distance (units)")==1 && controlDisabled(3,"Focus Speed")==0 &&
+            controlDisabled(3,"Focus Area")==0,"Automatic focus enables its fields and grays manual focus");
+        edit(dof,3,"Focus Speed",9);edit(dof,3,"Focus Area",0.08f);
+        edit(dof,3,"Focus Distance (units)",99);edit(dof,5,"Save",0);
+        const auto automatic=cge::Settings::Load(config).dof;
+        Check(automatic.autofocus && automatic.focusSpeed==9 && automatic.focusRadius==0.08f &&
+            automatic.focusDistance==2000,"Automatic focus controls persist without modifying manual fallback");
+        edit(dof,4,"Focus Mode",0);
+        Check(controlDisabled(3,"Focus Distance (units)")==0 && controlDisabled(3,"Focus Speed")==1,"Manual mode restores manual control");
+        edit(dof,3,"Focus Speed",2);edit(dof,5,"Save",0);
+        Check(cge::Settings::Load(config).dof.focusSpeed==9,"Inactive auto control retains its value");
+        edit(dof,5,"Reset Depth of Field",0);edit(dof,5,"Save",0);
         edit(profiles,3,"Dawn (hour)",7);edit(profiles,5,"Save",0);
         Check(cge::Settings::Load(config).dayHour==6 && controlDisabled(2,"Dawn (hour)")==1,"Automatic profile controls disabled when profiles are off");
         edit(profiles,1,"Automatic profiles",1);

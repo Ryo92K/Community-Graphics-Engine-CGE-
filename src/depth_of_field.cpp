@@ -4,7 +4,7 @@
 #include <algorithm>
 namespace cge {
 bool DepthOfFieldRenderer::Initialize(ID3D11Device* device,std::string& error) {
-    ready_=false;device_=device;
+    ready_=false;device_=device;focus_={};focusInitialized_=false;focusIndex_=0;
     Ptr<ID3D11DeviceContext> context;device->GetImmediateContext(&context);Ptr<ID3D11Device1> device1;
     if(FAILED(context.As(&context_)) || FAILED(device->QueryInterface(IID_PPV_ARGS(&device1)))) {
         error="Depth-of-field context isolation unavailable";return false;
@@ -20,10 +20,11 @@ bool DepthOfFieldRenderer::Initialize(ID3D11Device* device,std::string& error) {
         error=messages?std::string(static_cast<const char*>(messages->GetBufferPointer()),messages->GetBufferSize()):"Fog shader compilation failed";
         return false;
     };
-    Ptr<ID3DBlob> vs,ps;
-    if(!compile("DofVertex","vs_5_0",vs) || !compile("DofPixel","ps_5_0",ps) ||
+    Ptr<ID3DBlob> vs,ps,focus;
+    if(!compile("DofVertex","vs_5_0",vs) || !compile("DofPixel","ps_5_0",ps) || !compile("FocusPixel","ps_5_0",focus) ||
         FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
-        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)))return false;
+        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)) ||
+        FAILED(device->CreatePixelShader(focus->GetBufferPointer(),focus->GetBufferSize(),nullptr,&focusPixel_)))return false;
     D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=32;buffer.Usage=D3D11_USAGE_DEFAULT;buffer.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     if(FAILED(device->CreateBuffer(&buffer,nullptr,&constants_)) ||
@@ -32,11 +33,12 @@ bool DepthOfFieldRenderer::Initialize(ID3D11Device* device,std::string& error) {
     }
     ready_=true;return true;
 }
-std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const DepthInputs& inputs,const DofSettings& settings,bool enabled) {
+std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const DepthInputs& inputs,const DofSettings& settings,bool enabled,float seconds) {
     if(!enabled || !settings.enabled || settings.strength<=0) {
-        sourceView_.Reset();source_.Reset();width_=height_=0;format_=DXGI_FORMAT_UNKNOWN;return "Off";
+        sourceView_.Reset();source_.Reset();width_=height_=0;format_=DXGI_FORMAT_UNKNOWN;focus_={};focusInitialized_=false;return "Off";
     }
-    if(!std::isfinite(settings.strength) || !std::isfinite(settings.focusDistance))return "Invalid depth-of-field settings";
+    if(!std::isfinite(settings.strength) || !std::isfinite(settings.focusDistance) ||
+        !std::isfinite(settings.focusSpeed) || !std::isfinite(settings.focusRadius))return "Invalid depth-of-field settings";
     if(inputs.state==DepthState::CameraUnavailable || !ValidDepthProjection(inputs.nearPlane,inputs.farPlane))
         return "Camera data unavailable";
     if(!ready_ || !scene || !inputs.depth || inputs.state!=DepthState::Ready)return "Depth data unavailable";
@@ -63,11 +65,23 @@ std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const Dep
         d.CPUAccessFlags=d.MiscFlags=0;
         if(FAILED(device_->CreateTexture2D(&d,nullptr,&source_)) ||
             FAILED(device_->CreateShaderResourceView(source_.Get(),nullptr,&sourceView_)))return "Depth-of-field allocation failed";
-        width_=color.Width;height_=color.Height;format_=colorView.Format;
+        width_=color.Width;height_=color.Height;format_=colorView.Format;focusInitialized_=false;
     }
     D3D11_RENDER_TARGET_VIEW_DESC view{};view.Format=colorView.Format;view.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2D;
     Ptr<ID3D11RenderTargetView> output;
     if(FAILED(device_->CreateRenderTargetView(colorTexture.Get(),&view,&output)))return "HDR output unavailable";
+    if(settings.autofocus) {
+        for(auto& surface:focus_) {
+            if(surface.texture && surface.view && surface.target)continue;
+            surface=FocusSurface{};
+            D3D11_TEXTURE2D_DESC d{};d.Width=d.Height=d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
+            d.Format=DXGI_FORMAT_R32_FLOAT;d.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+            if(FAILED(device_->CreateTexture2D(&d,nullptr,&surface.texture)) ||
+                FAILED(device_->CreateShaderResourceView(surface.texture.Get(),nullptr,&surface.view)) ||
+                FAILED(device_->CreateRenderTargetView(surface.texture.Get(),nullptr,&surface.target)))
+                return "Autofocus texture allocation failed";
+        }
+    }else focusInitialized_=false;
     struct Restore {
         ID3D11DeviceContext1* context;Ptr<ID3DDeviceContextState> previous;
         Restore(ID3D11DeviceContext1* c,ID3DDeviceContextState* state):context(c){c->SwapDeviceContextState(state,&previous);}
@@ -76,16 +90,35 @@ std::string DepthOfFieldRenderer::Draw(ID3D11ShaderResourceView* scene,const Dep
     context_->ClearState();context_->CopyResource(source_.Get(),colorTexture.Get());
     auto* target=output.Get();context_->OMSetRenderTargets(1,&target,nullptr);
     const D3D11_VIEWPORT viewport{0,0,float(color.Width),float(color.Height),0,1};context_->RSSetViewports(1,&viewport);
-    struct Controls {float nearPlane,farPlane,focusDistance,strength,padding[4];};
+    struct Controls {float nearPlane,farPlane,focusDistance,strength;UINT autofocus;float seconds,speed,radius;};
     const Controls controls{inputs.nearPlane,inputs.farPlane,std::clamp(settings.focusDistance,1.0f,50000.0f),
-        std::clamp(settings.strength,0.0f,1.0f),{}};
+        std::clamp(settings.strength,0.0f,1.0f),settings.autofocus?1u:0u,
+        std::isfinite(seconds)?std::clamp(seconds,0.0f,0.1f):0.0f,
+        std::clamp(settings.focusSpeed,0.1f,20.0f),std::clamp(settings.focusRadius,0.0f,0.2f)};
     static_assert(sizeof(Controls)==32);
     context_->UpdateSubresource(constants_.Get(),0,nullptr,&controls,0,0);
     auto* buffer=constants_.Get();context_->PSSetConstantBuffers(0,1,&buffer);
     context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->RSSetState(raster_.Get());context_->VSSetShader(vertex_.Get(),nullptr,0);context_->PSSetShader(pixel_.Get(),nullptr,0);
-    ID3D11ShaderResourceView* views[]={sourceView_.Get(),inputs.depth.Get()};context_->PSSetShaderResources(0,2,views);
+    if(settings.autofocus) {
+        if(!focusInitialized_) {
+            const float seed[]={std::clamp(settings.focusDistance,1.0f,50000.0f),0,0,0};
+            for(const auto& surface:focus_)context_->ClearRenderTargetView(surface.target.Get(),seed);
+            focusIndex_=0;focusInitialized_=true;
+        }
+        const unsigned next=1-focusIndex_;
+        auto* focusTarget=focus_[next].target.Get();context_->OMSetRenderTargets(1,&focusTarget,nullptr);
+        const D3D11_VIEWPORT focusViewport{0,0,1,1,0,1};context_->RSSetViewports(1,&focusViewport);
+        ID3D11ShaderResourceView* focusViews[]={nullptr,inputs.depth.Get(),focus_[focusIndex_].view.Get()};
+        context_->PSSetShaderResources(0,3,focusViews);context_->PSSetShader(focusPixel_.Get(),nullptr,0);
+        context_->Draw(3,0);
+        ID3D11ShaderResourceView* empty[3]{};context_->PSSetShaderResources(0,3,empty);
+        focusIndex_=next;context_->OMSetRenderTargets(1,&target,nullptr);context_->RSSetViewports(1,&viewport);
+        context_->PSSetShader(pixel_.Get(),nullptr,0);
+    }
+    ID3D11ShaderResourceView* views[]={sourceView_.Get(),inputs.depth.Get(),settings.autofocus?focus_[focusIndex_].view.Get():nullptr};
+    context_->PSSetShaderResources(0,3,views);
     context_->Draw(3,0);
-    return "HDR depth of field active";
+    return settings.autofocus?"HDR depth of field active (autofocus)":"HDR depth of field active";
 }
 }

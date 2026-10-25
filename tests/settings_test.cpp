@@ -203,7 +203,9 @@ int wmain(int argc,wchar_t** argv) {
         const auto bounded=Settings::Load(path);
         FinishingParameters(bounded,[](auto,auto,auto,float value,auto,float high,auto){Check(value==high,"Finishing INI fields clamp to upper bounds");});
         Check(finishing.Save(path),"Restore valid settings");
-        for(unsigned invalidField=0;invalidField<15;++invalidField) {
+        unsigned finishingFieldCount=0;
+        FinishingParameters(finishing,[&](auto,auto,auto,auto,auto,auto,auto){++finishingFieldCount;});
+        for(unsigned invalidField=0;invalidField<finishingFieldCount;++invalidField) {
             auto invalid=finishing;unsigned index=0;
             FinishingParameters(invalid,[&](auto,auto,auto,float& value,auto,auto,auto) {
                 if(index++==invalidField)value=std::numeric_limits<float>::quiet_NaN();
@@ -213,6 +215,23 @@ int wmain(int argc,wchar_t** argv) {
         {std::ofstream file(path);file<<"[Color]\nSaturation=1.2\n";}
         const auto old=Settings::Load(path);
         FinishingEffects(old,[](auto,bool enabled){Check(!enabled,"Older configurations keep all four new effects disabled");});
+    }
+    {
+        Settings autofocus;autofocus.dof={true,2500,0.6f,true,7,0.08f};autofocus.SetSeparateProfiles(true);
+        autofocus.interior.dof.autofocus=false;autofocus.exteriorNight.dof.focusSpeed=3;
+        Check(autofocus.Save(path),"Save autofocus configuration");
+        const auto restored=Settings::Load(path);
+        Check(restored.dof==autofocus.dof && restored.interior.dof==autofocus.interior.dof &&
+            restored.exteriorNight.dof==autofocus.exteriorNight.dof,"Autofocus mode, speed and zone persist by profile");
+        {std::ofstream f(path);f<<"[ExteriorNight]\nDofAutofocus=true\nDofFocusSpeed=3\n[DepthOfField]\nFocusRadius=0.08\n";}
+        const auto inherited=Settings::Load(path);
+        Check(inherited.exteriorNight.dof.autofocus && inherited.exteriorNight.dof.focusSpeed==3 &&
+            inherited.exteriorNight.dof.focusRadius==0.08f,"Autofocus fields inherit independent of section order");
+        {std::ofstream f(path);f<<"[DepthOfField]\nAutofocus=true\nFocusSpeed=999\nFocusRadius=-1\n";}
+        Check(Settings::Load(path).dof.focusSpeed==20 && Settings::Load(path).dof.focusRadius==0,"Autofocus bounds");
+        autofocus.dof.focusSpeed=std::numeric_limits<float>::quiet_NaN();Check(!autofocus.Save(path),"Non-finite autofocus cannot save");
+        {std::ofstream f(path);f<<"[DepthOfField]\nFocusDistance=1500\n";}
+        Check(!Settings::Load(path).dof.autofocus && !Settings::Load(path).debanding.enabled,"Old configuration keeps manual focus and debanding off");
     }
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

@@ -3,12 +3,15 @@
 #include <cmath>
 namespace cge {
 template<class Profile,class Visitor>void FinishingEffects(Profile& p,Visitor&& visit) {
+    visit("Debanding",p.debanding.enabled);
     visit("Vignette",p.vignette.enabled);
     visit("FilmGrain",p.filmGrain.enabled);
     visit("SplitToning",p.splitToning.enabled);
     visit("ChromaticAberration",p.chromaticAberration.enabled);
 }
 template<class Profile,class Visitor>void FinishingParameters(Profile& p,Visitor&& visit) {
+    visit("Debanding","Strength","Strength",p.debanding.strength,0.0f,1.0f,0.5f);
+    visit("Debanding","Radius","Radius (px)",p.debanding.radius,1.0f,16.0f,4.0f);
     visit("Vignette","Strength","Strength",p.vignette.strength,0.0f,1.0f,0.25f);
     visit("Vignette","Radius","Radius",p.vignette.radius,0.0f,1.0f,0.35f);
     visit("Vignette","Softness","Softness",p.vignette.softness,0.01f,1.0f,0.5f);

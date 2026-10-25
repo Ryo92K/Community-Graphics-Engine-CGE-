@@ -154,15 +154,15 @@ void Render(unsigned page) noexcept {
                 if(Button("Reset Color")) {
                     const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;const auto vibrance=profile->vibrance;
                     const auto vignette=profile->vignette;const auto grain=profile->filmGrain;
-                    const auto split=profile->splitToning;const auto aberration=profile->chromaticAberration;
+                    const auto split=profile->splitToning;const auto aberration=profile->chromaticAberration;const auto debanding=profile->debanding;
                     *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;profile->vibrance=vibrance;
                     profile->vignette=vignette;profile->filmGrain=grain;profile->splitToning=split;
-                    profile->chromaticAberration=aberration;Changed();
+                    profile->chromaticAberration=aberration;profile->debanding=debanding;Changed();
                 }
                 api.endDisabled();
-            }else if(page>=10 && page<=13) {
-                constexpr const char* keys[]={"Vignette","FilmGrain","SplitToning","ChromaticAberration"};
-                constexpr const char* names[]={"Vignette","Film Grain","Split Toning","Chromatic Aberration"};
+            }else if(page>=10 && page<=14) {
+                constexpr const char* keys[]={"Vignette","FilmGrain","SplitToning","ChromaticAberration","Debanding"};
+                constexpr const char* names[]={"Vignette","Film Grain","Split Toning","Chromatic Aberration","Debanding"};
                 const auto* key=keys[page-10];
                 FinishingEffects(*profile,[&](const char* effect,bool& value) {
                     if(std::string_view(effect)==key && api.checkbox((std::string(names[page-10])+" enabled").c_str(),&value))Changed();
@@ -196,7 +196,18 @@ void Render(unsigned page) noexcept {
             }else if(page==6) {
                 if(api.checkbox("Depth of field enabled",&profile->dof.enabled))Changed();
                 api.beginDisabled(!settings.enabled || !profile->dof.enabled);
+                constexpr const char* focusModes[]={"Manual","Auto"};
+                int focusMode=profile->dof.autofocus?1:0;
+                if(api.combo("Focus Mode",&focusMode,focusModes,2,-1) && focusMode>=0 && focusMode<2) {
+                    profile->dof.autofocus=focusMode==1;Changed();
+                }
+                api.beginDisabled(profile->dof.autofocus);
                 Control("Focus Distance (units)",profile->dof.focusDistance,1,50000,2000);
+                api.endDisabled();
+                api.beginDisabled(!profile->dof.autofocus);
+                Control("Focus Speed",profile->dof.focusSpeed,0.1f,20,5);
+                Control("Focus Area",profile->dof.focusRadius,0,0.2f,0.03f);
+                api.endDisabled();
                 Control("Blur Strength",profile->dof.strength,0,1,0.5f);
                 if(Button("Reset Depth of Field")){profile->dof=DofSettings{};Changed();}
                 api.endDisabled();
@@ -238,6 +249,7 @@ void __stdcall Vignette(){Render(10);}
 void __stdcall FilmGrain(){Render(11);}
 void __stdcall SplitToning(){Render(12);}
 void __stdcall ChromaticAberration(){Render(13);}
+void __stdcall Debanding(){Render(14);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -275,11 +287,11 @@ bool Register(std::string& status) {
         "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
         "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Vibrance",
         "Community Graphics Engine/Effects/Vignette","Community Graphics Engine/Effects/Film Grain",
-        "Community Graphics Engine/Effects/Split Toning","Community Graphics Engine/Effects/Chromatic Aberration"};
-    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance,Vignette,FilmGrain,SplitToning,ChromaticAberration};
-    for(unsigned i=0;i<14;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Split Toning","Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Debanding"};
+    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity,Vibrance,Vignette,FilmGrain,SplitToning,ChromaticAberration,Debanding};
+    for(unsigned i=0;i<15;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 14 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 15 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

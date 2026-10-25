@@ -96,7 +96,7 @@ bool Renderer::Initialize(ID3D11Device* device,std::string& error) {
     if(FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
        FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&pixel_)) ||
        FAILED(device->CreatePixelShader(mb->GetBufferPointer(),mb->GetBufferSize(),nullptr,&motionPixel_)))return false;
-    D3D11_BUFFER_DESC desc{};desc.ByteWidth=144;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_BUFFER_DESC desc{};desc.ByteWidth=160;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     if(FAILED(device->CreateBuffer(&desc,nullptr,&constants_)))return false;
     D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
     return SUCCEEDED(device->CreateRasterizerState(&raster,&raster_));
@@ -175,7 +175,7 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
         struct Controls {
             float exposure,contrast,saturation,sharpen,gamma,temperature,motionScale,radius;
             UINT samples;float clarity,vibrance;UINT grainFrame;
-            float vignette[4],grain[4],split[4],shadows[4],highlights[4],aberration[4];
+            float vignette[4],grain[4],split[4],shadows[4],highlights[4],aberration[4],debanding[4];
         } parameters{settings.exposure,settings.contrast,settings.saturation,settings.sharpen,settings.gamma,
             settings.temperature*0.01f,blur?exposure:0,std::clamp(motion.settings.radius,1.0f,64.0f),
             static_cast<UINT>(MotionSettings::ValidSamples(motion.settings.samples)?motion.settings.samples:12),
@@ -186,8 +186,9 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
             {amount(settings.splitToning.enabled,settings.splitToning.strength),bound(settings.splitToning.balance,0,1,0.5f),0,0},
             {bound(settings.splitToning.shadowRed,0,1,0.25f),bound(settings.splitToning.shadowGreen,0,1,0.4f),bound(settings.splitToning.shadowBlue,0,1,0.65f),0},
             {bound(settings.splitToning.highlightRed,0,1,1),bound(settings.splitToning.highlightGreen,0,1,0.72f),bound(settings.splitToning.highlightBlue,0,1,0.45f),0},
-            {amount(settings.chromaticAberration.enabled,settings.chromaticAberration.strength),bound(settings.chromaticAberration.radius,0,1,0.5f),0,0}};
-        static_assert(sizeof(Controls)==144);
+            {amount(settings.chromaticAberration.enabled,settings.chromaticAberration.strength),bound(settings.chromaticAberration.radius,0,1,0.5f),0,0},
+            {amount(settings.debanding.enabled,settings.debanding.strength),bound(settings.debanding.radius,1,16,4),0,0}};
+        static_assert(sizeof(Controls)==160);
         context_->UpdateSubresource(constants_.Get(),0,nullptr,&parameters,0,0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         context_->RSSetState(raster_.Get());context_->VSSetShader(vertex_.Get(),nullptr,0);

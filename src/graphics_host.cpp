@@ -115,7 +115,8 @@ void HDR(ID3D11ShaderResourceView* source) noexcept {
         if(fogStatus!=host.fogStatus) {
             host.fogStatus=fogStatus;if(host.report)host.report("CGE distance fog: "+fogStatus);
         }
-        auto dofStatus=host.dof.Draw(source,depth,host.color.dof,active);
+        if(host.changedLocation)host.dof.ResetAutofocus();
+        auto dofStatus=host.dof.Draw(source,depth,host.color.dof,active,host.frameSeconds);
         if(dofStatus!=host.dofStatus) {
             host.dofStatus=dofStatus;if(host.report)host.report("CGE depth of field: "+dofStatus);
         }

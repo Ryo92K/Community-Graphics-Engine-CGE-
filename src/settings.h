@@ -15,6 +15,8 @@ struct FogSettings {
 struct DofSettings {
     bool enabled{false};
     float focusDistance{2000},strength{0.5f};
+    bool autofocus{false};
+    float focusSpeed{5},focusRadius{0.03f};
     bool operator==(const DofSettings&) const =default;
 };
 struct ClaritySettings {
@@ -49,6 +51,11 @@ struct ChromaticAberrationSettings {
     float strength{0.25f},radius{0.5f};
     bool operator==(const ChromaticAberrationSettings&) const =default;
 };
+struct DebandingSettings {
+    bool enabled{false};
+    float strength{0.5f},radius{4};
+    bool operator==(const DebandingSettings&) const =default;
+};
 struct ColorSettings {
     float exposure{},contrast{1},saturation{1},sharpen{},gamma{1},temperature{};
     BloomSettings bloom;
@@ -60,11 +67,13 @@ struct ColorSettings {
     FilmGrainSettings filmGrain;
     SplitToningSettings splitToning;
     ChromaticAberrationSettings chromaticAberration;
+    DebandingSettings debanding;
     bool Neutral() const noexcept {return exposure==0 && contrast==1 && saturation==1 && sharpen==0 && gamma==1 && temperature==0 && (!clarity.enabled || clarity.strength<=0) && (!vibrance.enabled || vibrance.strength<=0) &&
         (!vignette.enabled || vignette.strength<=0 || vignette.radius>=1) &&
         (!filmGrain.enabled || filmGrain.strength<=0) &&
         (!splitToning.enabled || splitToning.strength<=0) &&
-        (!chromaticAberration.enabled || chromaticAberration.strength<=0 || chromaticAberration.radius>=1);}
+        (!chromaticAberration.enabled || chromaticAberration.strength<=0 || chromaticAberration.radius>=1) &&
+        (!debanding.enabled || debanding.strength<=0);}
     bool operator==(const ColorSettings&) const =default;
 };
 struct MotionSettings {

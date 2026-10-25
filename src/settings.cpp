@@ -47,6 +47,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
             if(value=="true" || value=="1")result.clarity.enabled=true;
             else if(value=="false" || value=="0")result.clarity.enabled=false;
         }
+        if(section=="DepthOfField" && key=="Autofocus") {
+            if(value=="true" || value=="1")result.dof.autofocus=true;
+            else if(value=="false" || value=="0")result.dof.autofocus=false;
+        }
         if(section=="DepthOfField" && key=="Enabled") {
             if(value=="true" || value=="1")result.dof.enabled=true;
             else if(value=="false" || value=="0")result.dof.enabled=false;
@@ -74,6 +78,8 @@ Settings Settings::Load(const std::filesystem::path& path) {
         });
         if(section=="Vibrance" && key=="Strength")result.vibrance.strength=std::clamp(number,0.0f,1.0f);
         if(section=="Clarity" && key=="Strength")result.clarity.strength=std::clamp(number,0.0f,1.0f);
+        if(section=="DepthOfField" && key=="FocusSpeed")result.dof.focusSpeed=std::clamp(number,0.1f,20.0f);
+        if(section=="DepthOfField" && key=="FocusRadius")result.dof.focusRadius=std::clamp(number,0.0f,0.2f);
         if(section=="DepthOfField" && key=="FocusDistance")result.dof.focusDistance=std::clamp(number,1.0f,50000.0f);
         if(section=="DepthOfField" && key=="Strength")result.dof.strength=std::clamp(number,0.0f,1.0f);
         if(section=="Fog" && key=="Density")result.fog.density=std::clamp(number,0.0f,1.0f);
@@ -112,6 +118,10 @@ Settings Settings::Load(const std::filesystem::path& path) {
                 if(entry.value=="true" || entry.value=="1")profile.clarity.enabled=true;
                 else if(entry.value=="false" || entry.value=="0")profile.clarity.enabled=false;
             }
+            if(entry.key=="DofAutofocus") {
+                if(entry.value=="true" || entry.value=="1")profile.dof.autofocus=true;
+                else if(entry.value=="false" || entry.value=="0")profile.dof.autofocus=false;
+            }
             if(entry.key=="DofEnabled") {
                 if(entry.value=="true" || entry.value=="1")profile.dof.enabled=true;
                 else if(entry.value=="false" || entry.value=="0")profile.dof.enabled=false;
@@ -132,6 +142,8 @@ Settings Settings::Load(const std::filesystem::path& path) {
             });
             if(entry.key=="VibranceStrength")profile.vibrance.strength=std::clamp(number,0.0f,1.0f);
             if(entry.key=="ClarityStrength")profile.clarity.strength=std::clamp(number,0.0f,1.0f);
+            if(entry.key=="DofFocusSpeed")profile.dof.focusSpeed=std::clamp(number,0.1f,20.0f);
+            if(entry.key=="DofFocusRadius")profile.dof.focusRadius=std::clamp(number,0.0f,0.2f);
             if(entry.key=="DofFocusDistance")profile.dof.focusDistance=std::clamp(number,1.0f,50000.0f);
             if(entry.key=="DofStrength")profile.dof.strength=std::clamp(number,0.0f,1.0f);
             if(entry.key=="FogDensity")profile.fog.density=std::clamp(number,0.0f,1.0f);
@@ -158,7 +170,7 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
     try {
         auto finite=[](const ColorSettings& p){return std::isfinite(p.exposure)&&std::isfinite(p.contrast)&&
             std::isfinite(p.saturation)&&std::isfinite(p.sharpen)&&std::isfinite(p.gamma)&&std::isfinite(p.temperature)&&std::isfinite(p.bloom.intensity)&&
-            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance)&&std::isfinite(p.dof.focusDistance)&&std::isfinite(p.dof.strength)&&std::isfinite(p.clarity.strength)&&std::isfinite(p.vibrance.strength)&&FiniteFinishing(p);};
+            std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance)&&std::isfinite(p.dof.focusDistance)&&std::isfinite(p.dof.strength)&&std::isfinite(p.dof.focusSpeed)&&std::isfinite(p.dof.focusRadius)&&std::isfinite(p.clarity.strength)&&std::isfinite(p.vibrance.strength)&&FiniteFinishing(p);};
         if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds))return false;
         if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
@@ -183,6 +195,9 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
                 <<"\nFogStartDistance="<<std::clamp(p.fog.startDistance,0.0f,50000.0f)
                 <<"\nDofEnabled="<<(p.dof.enabled?"true":"false")
                 <<"\nDofFocusDistance="<<std::clamp(p.dof.focusDistance,1.0f,50000.0f)
+                <<"\nDofAutofocus="<<(p.dof.autofocus?"true":"false")
+                <<"\nDofFocusSpeed="<<std::clamp(p.dof.focusSpeed,0.1f,20.0f)
+                <<"\nDofFocusRadius="<<std::clamp(p.dof.focusRadius,0.0f,0.2f)
                 <<"\nDofStrength="<<std::clamp(p.dof.strength,0.0f,1.0f)
                 <<"\nClarityEnabled="<<(p.clarity.enabled?"true":"false")
                 <<"\nClarityStrength="<<std::clamp(p.clarity.strength,0.0f,1.0f)
@@ -202,6 +217,9 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
             <<"\nDensity="<<std::clamp(fog.density,0.0f,1.0f)
             <<"\nStartDistance="<<std::clamp(fog.startDistance,0.0f,50000.0f)<<"\n";
         text<<"\n[DepthOfField]\nEnabled="<<(dof.enabled?"true":"false")
+            <<"\nAutofocus="<<(dof.autofocus?"true":"false")
+            <<"\nFocusSpeed="<<std::clamp(dof.focusSpeed,0.1f,20.0f)
+            <<"\nFocusRadius="<<std::clamp(dof.focusRadius,0.0f,0.2f)
             <<"\nFocusDistance="<<std::clamp(dof.focusDistance,1.0f,50000.0f)
             <<"\nStrength="<<std::clamp(dof.strength,0.0f,1.0f)<<"\n";
         text<<"\n[Clarity]\nEnabled="<<(clarity.enabled?"true":"false")
