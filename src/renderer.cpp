@@ -169,10 +169,11 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     if(process) {
         struct Controls {
             float exposure,contrast,saturation,sharpen,gamma,temperature,motionScale,radius;
-            UINT samples;float padding[3];
+            UINT samples;float clarity;float padding[2];
         } parameters{settings.exposure,settings.contrast,settings.saturation,settings.sharpen,settings.gamma,
             settings.temperature*0.01f,blur?exposure:0,std::clamp(motion.settings.radius,1.0f,64.0f),
-            static_cast<UINT>(MotionSettings::ValidSamples(motion.settings.samples)?motion.settings.samples:12),{}};
+            static_cast<UINT>(MotionSettings::ValidSamples(motion.settings.samples)?motion.settings.samples:12),
+            settings.clarity.enabled && std::isfinite(settings.clarity.strength)?std::clamp(settings.clarity.strength,0.0f,1.0f):0,{}};
         static_assert(sizeof(Controls)==48);
         context_->UpdateSubresource(constants_.Get(),0,nullptr,&parameters,0,0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

@@ -145,9 +145,13 @@ void Render(unsigned page) noexcept {
                 Control("Gamma",profile->gamma,0.5f,2.5f,1);
                 Control("Color Temperature",profile->temperature,-100,100,0);
                 if(Button("Reset Color")) {
-                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;
-                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;Changed();
+                    const auto bloom=profile->bloom;const auto fog=profile->fog;const auto dof=profile->dof;const auto clarity=profile->clarity;
+                    *profile=ColorSettings{};profile->bloom=bloom;profile->fog=fog;profile->dof=dof;profile->clarity=clarity;Changed();
                 }
+            }else if(page==8) {
+                if(api.checkbox("Clarity enabled",&profile->clarity.enabled))Changed();
+                Control("Strength",profile->clarity.strength,0,1,0.25f);
+                if(Button("Reset Clarity")){profile->clarity=ClaritySettings{};Changed();}
             }else if(page==6) {
                 if(api.checkbox("Depth of field enabled",&profile->dof.enabled))Changed();
                 Control("Focus Distance (units)",profile->dof.focusDistance,1,50000,2000);
@@ -181,6 +185,7 @@ void __stdcall Motion(){Render(4);}
 void __stdcall Fog(){Render(5);}
 void __stdcall Dof(){Render(6);}
 void __stdcall Presets(){Render(7);}
+void __stdcall Clarity(){Render(8);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -216,11 +221,11 @@ bool Register(std::string& status) {
         "Community Graphics Engine/General","Community Graphics Engine/Presets","Community Graphics Engine/Profiles",
         "Community Graphics Engine/Effects/Color","Community Graphics Engine/Effects/Bloom",
         "Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
-        "Community Graphics Engine/Effects/Motion Blur"};
-    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion};
-    for(unsigned i=0;i<8;++i)api.addPage(paths[i],pages[i]);
+        "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Clarity"};
+    const Page pages[]={General,Presets,Profiles,Color,Bloom,Fog,Dof,Motion,Clarity};
+    for(unsigned i=0;i<9;++i)api.addPage(paths[i],pages[i]);
     registered=true;
-    status="CGE SKSE Menu Framework ready: 8 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 9 pages registered; legacy menu and hotkeys removed";
     return true;
 }
 bool IsBlocking() noexcept {return registered && api.blocking();}

@@ -5,7 +5,7 @@
                                                                                              
 namespace cge::skse {
 constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
-constexpr std::uint32_t Version=(5u<<16)|(1u<<4);
+constexpr std::uint32_t Version=(5u<<16)|(2u<<4);
 struct Interface {
     std::uint32_t skseVersion,runtimeVersion,editorVersion,isEditor;
     void* (*queryInterface)(std::uint32_t){};

@@ -35,7 +35,9 @@ class ProfileTransition {
                 mix(a.fog.enabled?a.fog.density:0,b.fog.enabled?b.fog.density:0),
                 mix(a.fog.startDistance,b.fog.startDistance)},
             {a.dof.enabled || b.dof.enabled,mix(a.dof.focusDistance,b.dof.focusDistance),
-                mix(a.dof.enabled?a.dof.strength:0,b.dof.enabled?b.dof.strength:0)}};
+                mix(a.dof.enabled?a.dof.strength:0,b.dof.enabled?b.dof.strength:0)},
+            {a.clarity.enabled || b.clarity.enabled,
+                mix(a.clarity.enabled?a.clarity.strength:0,b.clarity.enabled?b.clarity.strength:0)}};
     }
 public:
     void Reset() noexcept {*this=ProfileTransition{};}

@@ -131,5 +131,26 @@ int wmain(int argc,wchar_t** argv) {
     {std::ofstream file(path);file<<"[Fog]\nEnabled=true\nDensity=0.5\n";}
     auto oldDof=Settings::Load(path);
     Check(oldDof.fog.enabled && !oldDof.dof.enabled && !oldDof.interior.dof.enabled,"0.5.0 configuration keeps depth of field disabled");
+    Settings clarity;clarity.clarity={true,0.7f};clarity.SetSeparateProfiles(true);
+    clarity.interior.clarity={false,0.2f};clarity.exteriorNight.clarity={true,0.9f};
+    Check(clarity.Save(path),"Save clarity");
+    const auto clarityReload=Settings::Load(path);
+    Check(clarityReload==clarity && clarityReload.interior==clarity.interior &&
+        clarityReload.exterior==clarity.exterior && clarityReload.exteriorNight==clarity.exteriorNight,"Clarity round trip for all profiles");
+    {std::ofstream file(path);file<<"[ExteriorNight]\nClarityStrength=0.8\n[ExteriorDay]\nClarityStrength=0.4\n[Clarity]\nEnabled=true\nStrength=0.3\n";}
+    const auto inheritedClarity=Settings::Load(path);
+    Check(inheritedClarity.interior.clarity.strength==0.3f && inheritedClarity.exterior.clarity.enabled &&
+        inheritedClarity.exterior.clarity.strength==0.4f && inheritedClarity.exteriorNight.clarity.strength==0.8f,"Clarity inheritance ignores section order");
+    {std::ofstream file(path);file<<"[Clarity]\nEnabled=true\nStrength=99\n[Interior]\nClarityStrength=-1\n[ExteriorNight]\nClarityStrength=nan\n";}
+    const auto boundedClarity=Settings::Load(path);
+    Check(boundedClarity.clarity.strength==1 && boundedClarity.interior.clarity.strength==0 &&
+        boundedClarity.exteriorNight.clarity.strength==1,"Clarity bounds and finite values");
+    clarity.interior.clarity.strength=std::numeric_limits<float>::quiet_NaN();
+    const auto beforeInvalid=Settings::Load(path);
+    Check(!clarity.Save(path) && Settings::Load(path).interior==beforeInvalid.interior,"Invalid clarity cannot replace existing settings");
+    {std::ofstream file(path);file<<"[Clarity]\nStrength=nan\n";}
+    Check(Settings::Load(path).clarity.strength==0.25f,"Non-finite clarity retains default");
+    {std::ofstream file(path);file<<"[DepthOfField]\nEnabled=true\nStrength=0.75\n";}
+    Check(!Settings::Load(path).clarity.enabled && Settings::Load(path).dof.enabled,"Old settings retain their appearance");
     std::puts("PASS: CGE settings bounds, finite values, persistence and failure handling.");
 }

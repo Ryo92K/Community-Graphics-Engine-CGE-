@@ -180,7 +180,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?8u:0u),"Validate API before registering exactly eight pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?9u:0u),"Validate API before registering exactly nine pages");
     const char* shared="Community Graphics Engine/Effects/Color";
     const char* bloom="Community Graphics Engine/Effects/Bloom";
     if(frameworkReady)Check(render(shared),"Page callback tolerates missing graphics device");
@@ -219,9 +219,17 @@ int wmain(int argc,wchar_t** argv) {
     device->CreateTexture2D(&d,nullptr,&hdrReadback);
     std::vector<float> hdrPixels(64*64*4,0.05f);
     for(unsigned y=30;y<34;++y)for(unsigned x=30;x<34;++x)for(unsigned c=0;c<3;++c)hdrPixels[(y*64+x)*4+c]=8;
-    bool nativeResourcesValid=true;
+    bool nativeResourcesValid=true,clarityPattern=false;
     auto present=[&] {
         const float color[]={0.8f,0.4f,0.2f,0.3f};context->ClearRenderTargetView(output.Get(),color);
+        if(clarityPattern) {
+            std::vector<unsigned char> pixels(64*64*4);
+            for(unsigned y=0;y<64;++y)for(unsigned x=0;x<64;++x) {
+                const auto at=(y*64+x)*4;
+                pixels[at]=pixels[at+1]=pixels[at+2]=x>=31 && x<=32?145:120;pixels[at+3]=77;
+            }
+            context->UpdateSubresource(buffer.Get(),0,nullptr,pixels.data(),64*4,0);
+        }
         auto* rt=output.Get();context->OMSetRenderTargets(1,&rt,nullptr);
         D3D11_VIEWPORT sentinel{3,4,19,20,0,1};context->RSSetViewports(1,&sentinel);
         if(nativeResourcesValid) {
@@ -356,6 +364,28 @@ int wmain(int argc,wchar_t** argv) {
         edit(dof,4,"##Profile",0);edit(dof,1,"Depth of field enabled",0);edit(dof,5,"Save",0);
         present();if(sceneReady && !hdrConflict)Check(hdrPixel(32)==8,"Depth-of-field toggle restores sharp native scene");
         context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
+        const char* clarity="Community Graphics Engine/Effects/Clarity";
+        edit(clarity,4,"##Profile",0);edit(clarity,1,"Clarity enabled",1);
+        edit(clarity,3,"Strength",99);edit(clarity,5,"Save",0);
+        Check(cge::Settings::Load(config).clarity.enabled && cge::Settings::Load(config).clarity.strength==1,"Clarity numeric input bounds and save");
+        clarityPattern=true;present();
+        context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE clarityMap{};
+        Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&clarityMap)),"Native clarity readback");
+        const auto* clarityBytes=static_cast<const unsigned char*>(clarityMap.pData);
+        Check(sceneReady?clarityBytes[32*clarityMap.RowPitch+32*4]>145:clarityBytes[32*clarityMap.RowPitch+32*4]==145,
+            "Clarity runs only at the verified scene boundary");
+        Check(clarityBytes[0]==17 && clarityBytes[1]==231 && clarityBytes[2]==93 && clarityBytes[3]==77,"Clarity leaves the native HUD untouched");
+        context->Unmap(readback.Get(),0);clarityPattern=false;
+        edit(clarity,3,"Strength",0.65f);edit(shared,5,"Reset Color",0);edit(shared,5,"Save",0);
+        Check(cge::Settings::Load(config).clarity.strength==0.65f && cge::Settings::Load(config).clarity.enabled,"Reset Color preserves clarity");
+        edit(profiles,1,"Automatic profiles",1);edit(clarity,4,"##Profile",3);
+        edit(clarity,1,"Clarity enabled",1);edit(clarity,3,"Strength",0.8f);edit(clarity,5,"Save",0);
+        Check(cge::Settings::Load(config).exteriorNight.clarity.strength==0.8f,"Clarity saves selected profile");
+        edit(clarity,5,"Reset Clarity",0);edit(clarity,5,"Save",0);
+        Check(!cge::Settings::Load(config).exteriorNight.clarity.enabled &&
+            cge::Settings::Load(config).clarity.strength==0.65f,"Clarity reset affects only the selected profile");
+        edit(profiles,1,"Automatic profiles",0);edit(clarity,4,"##Profile",0);
+        edit(clarity,5,"Reset Clarity",0);edit(clarity,5,"Save",0);
         const char* motion="Community Graphics Engine/Effects/Motion Blur";
         edit(motion,1,"Motion blur enabled",1);edit(motion,4,"Quality",2);edit(motion,5,"Save",0);
         Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");

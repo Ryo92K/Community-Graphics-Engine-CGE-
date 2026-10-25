@@ -15,7 +15,7 @@ framework and its listed requirements separately.
 
 ## SKSE Menu Framework bridge
 
-CGE registers eight pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
+CGE registers nine pages on SKSE PostPostLoad, after all plugin DLLs have loaded.
 It does not load an arbitrary framework DLL from disk or require a DLL load-order shim.
 
 src/menu_framework.cpp contains CGE's minimal declarations of the public export
@@ -126,3 +126,32 @@ so the selected look appears on the next frame. Doorway/day/night transitions
 continue to use the preset's normal timing.
 A one-step session snapshot provides Undo Preset. Neither operation writes the
 INI until the user selects Save.
+
+
+## Clarity (0.5.2)
+
+Clarity runs in the existing SDR color shader at the verified boundary before
+the native interface. It uses the unmodified source luminance and a 5 by 5 tent
+kernel with luminance range weights. Sample spacing scales with render height,
+with a minimum of one pixel. At 1080p the kernel extends eight pixels each way.
+The luminance difference is limited to 0.08 and attenuated near black and white.
+The adjustment moves RGB towards black or white within the available gamut,
+preserving neutral colors and source alpha.
+
+The effect shares the color pass, source copy and context isolation. It adds no
+render target, temporal history, depth input or TAA requirement. Enabled strength
+above zero adds 24 neighboring texture reads per pixel; performance in game
+depends on the GPU and render resolution. Disabled or zero strength skips them.
+
+Clarity defaults to disabled with Strength 0.25. Shared values use [Clarity],
+Enabled and Strength; profiles use ClarityEnabled and ClarityStrength. Strength
+is restricted to 0 through 1. Missing keys retain the prior appearance. Profile
+transitions fade disabled endpoints through zero strength. Reset Color preserves
+Clarity, and Reset Clarity changes only the selected profile. Built-in presets
+retain their original appearance with Clarity disabled.
+
+GPU tests cover local contrast, strength, exact bypasses, exposure composition,
+alpha, bounded output, neutral colors, black/white edges, render-resolution
+scaling and state restoration. Settings and framework tests cover profile
+selection, numeric input, persistence, inheritance, reset isolation and the
+native scene/HUD boundary. In-game appearance and GPU timing remain to be checked.

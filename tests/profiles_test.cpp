@@ -77,5 +77,14 @@ int main() {
     dof.transitionSeconds=0;lens.Reset();
     const auto duskDof=lens.Update(dof,Environment::Exterior,0,20).dof;
     Check(Near(duskDof.focusDistance,1250) && Near(duskDof.strength,0.8f),"Depth of field blends at dusk");
+    Settings clarity;clarity.clarity={true,0.6f};clarity.SetSeparateProfiles(true);clarity.transitionSeconds=2;
+    clarity.interior.clarity={false,0.5f};clarity.exteriorNight.clarity={true,1};
+    ProfileTransition detail;
+    Check(Near(detail.Update(clarity,Environment::Exterior,0,12).clarity.strength,0.6f),"Clarity selects day profile");
+    const auto halfClarity=detail.Update(clarity,Environment::Interior,1,12).clarity;
+    Check(halfClarity.enabled && Near(halfClarity.strength,0.3f),"Clarity fades towards disabled interior");
+    Check(detail.Update(clarity,Environment::Interior,1,12).Neutral(),"Clarity fade reaches neutral");
+    clarity.transitionSeconds=0;detail.Reset();
+    Check(Near(detail.Update(clarity,Environment::Exterior,0,20).clarity.strength,0.8f),"Clarity blends at dusk");
     std::puts("PASS: profile selection, smooth transitions, retargeting, loading and shared mode.");
 }

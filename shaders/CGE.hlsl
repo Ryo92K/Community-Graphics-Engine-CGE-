@@ -11,7 +11,8 @@ cbuffer CgeColorControls : register(b0) {
     float CgeMotionScale;
     float CgeMotionRadius;
     uint CgeMotionSamples;
-    float3 CgePadding;
+    float CgeClarity;
+    float2 CgePadding;
 };
 float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
     float2 corner=float2((vertex<<1)&2,vertex&2);
@@ -20,11 +21,33 @@ float4 FullscreenVertex(uint vertex : SV_VertexID) : SV_Position {
 float3 ReadNeighbor(int2 pixel,int2 size) {
     return CgeInput.Load(int3(clamp(pixel,int2(0,0),size-1),0)).rgb;
 }
+float3 ApplyClarity(float3 color,int2 pixel,int2 size) {
+    const float3 lumaWeights=float3(0.2126,0.7152,0.0722);
+    float center=dot(color,lumaWeights);
+    float sum=0,weight=0;
+    int spacing=max(1,int(round(float(size.y)*4.0/1080.0)));
+    [unroll]for(int y=-2;y<=2;++y) {
+        [unroll]for(int x=-2;x<=2;++x) {
+            float sampleLuma=dot(ReadNeighbor(pixel+int2(x,y)*spacing,size),lumaWeights);
+            float delta=sampleLuma-center;
+            float spatial=float((3-abs(x))*(3-abs(y)));
+            float w=spatial/(1.0+64.0*delta*delta);
+            sum+=sampleLuma*w;weight+=w;
+        }
+    }
+    float detail=center-sum/weight;
+    float midtones=4.0*saturate(center)*(1.0-saturate(center));
+    float adjustment=clamp(detail*0.8,-0.08,0.08)*midtones*CgeClarity;
+    float3 direction=adjustment>=0?1.0-color:color;
+    float available=adjustment>=0?1.0-center:center;
+    return color+direction*(adjustment/max(available,0.0001));
+}
 float4 ColorPixel(float4 position : SV_Position) : SV_Target {
     uint width,height;CgeInput.GetDimensions(width,height);
     int2 pixel=int2(position.xy),size=int2(width,height);
     float4 source=CgeInput.Load(int3(pixel,0));
     float3 color=source.rgb;
+    if(CgeClarity>0)color=ApplyClarity(color,pixel,size);
     if(CgeSharpen>0) {
         float3 neighbors=ReadNeighbor(pixel+int2(-1,0),size)+ReadNeighbor(pixel+int2(1,0),size)
             +ReadNeighbor(pixel+int2(0,-1),size)+ReadNeighbor(pixel+int2(0,1),size);
