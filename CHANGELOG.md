@@ -6,11 +6,17 @@
 - Added Presets
 
 
+
+
+
 ### **0.5.0 (24-10-26)**
  
 ### **Features :**
 
 - Added Distance Fog
+
+
+
 
 
 ### **0.4 (24-10-26)**
@@ -22,6 +28,9 @@
 ### **Improvements :**
 
 - SKSE Menu Framework Integration
+
+
+
 
 
 ### **0.3 (24-10-26)**
@@ -37,6 +46,9 @@
 - Changed Font
 
 
+
+
+
 ### **0.2 (24-10-26)**
  
 ### **Features :**
@@ -44,6 +56,9 @@
 - Added Specific Profils for Interiors/Exteriors
 - Added Separated/Shared Option for Interiors/Exteriors
 - Added Adaption Time between Interiors/Exteriors
+
+
+
 
 
 ### **0.1 (24-10-26)**
@@ -57,6 +72,9 @@
 ### **Bug Fixes**
 
 - Fixed modifications changing UI
+
+
+
 
 
 ### **0.1alpha (24-10-26)**
