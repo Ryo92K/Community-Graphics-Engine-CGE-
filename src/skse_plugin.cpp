@@ -28,7 +28,7 @@ void BootstrapTrace(HINSTANCE instance) noexcept {
     for(DWORD i=0;i<sizeof(name)/sizeof(wchar_t);++i)path[end+i]=name[i];
     HANDLE file=CreateFileW(path,FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE)return;
-    constexpr char text[]="CGE 0.7.1: DLL process attach reached; SKSE Load has not run yet.\r\n";
+    constexpr char text[]="CGE 0.8.0: DLL process attach reached; SKSE Load has not run yet.\r\n";
     DWORD written{};WriteFile(file,text,sizeof(text)-1,&written,nullptr);CloseHandle(file);
 }
 void Log(const char* format,...) {
@@ -42,7 +42,9 @@ void Log(const char* format,...) {
     WriteFile(file,"\r\n",2,&written,nullptr);CloseHandle(file);
 }
 void OnSKSEMessage(cge::skse::Message* message) {
-    if(!message || !message->sender || strcmp(message->sender,"SKSE") || message->type!=1)return;
+    if(!message || !message->sender || strcmp(message->sender,"SKSE"))return;
+    if(message->type==2 || message->type==3 || message->type==7)cge::graphics::ResetSsaoHistory();
+    if(message->type!=1)return;
     try {
         std::string status;cge::menu::Register(status);Log("%s",status.c_str());
     }catch(...){Log("CGE SKSE Menu Framework registration failed");}
@@ -68,14 +70,7 @@ HRESULT WINAPI OnCreation(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE s
 }
 }
 extern "C" {
-__declspec(dllexport) constinit cge::skse::Metadata SKSEPlugin_Version={
-    1,cge::skse::Version,"Community Graphics Engine","CGE contributors","",
-    2,0,{cge::runtime::Pack(6,317),cge::runtime::Pack(6,318),cge::runtime::Pack(6,323),
-        cge::runtime::Pack(6,342),cge::runtime::Pack(6,353),cge::runtime::Pack(6,629),
-        cge::runtime::Pack(6,640),cge::runtime::Pack(6,659),cge::runtime::Pack(6,1130),
-        cge::runtime::Pack(6,1170),cge::runtime::Pack(6,1179),
-        cge::runtime::Pack(7,99),cge::runtime::Pack(7,104),cge::runtime::Pack(5,97),0},0
-};
+__declspec(dllexport) constinit cge::skse::Metadata SKSEPlugin_Version=cge::skse::BuildMetadata();
 __declspec(dllexport) bool SKSEPlugin_Query(const cge::skse::Interface* api,cge::skse::Info* info) {
     InitializeLogPath();
     const bool accepted=info && cge::commonlib::Compatible(api);
@@ -93,7 +88,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
         if(!cge::commonlib::Compatible(api)){Log("CGE load refused: unsupported SKSE interface or executable");return false;}
         if(loaded)return api->runtimeVersion==cge::runtime::selected.version;
         cge::runtime::selected=*cge::runtime::Select(api->runtimeVersion);
-        Log("Community Graphics Engine (CGE) 0.7.1 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
+        Log("Community Graphics Engine (CGE) 0.8.0 | SKSE plugin | runtime=0x%08X",api->runtimeVersion);
                                                                                           
                                                                                  
         if(auto runtime=GetModuleHandleW(L"d3d11.dll")) {
@@ -106,6 +101,7 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
                 return false;
             }
         }
+        Log("CGE compiled runtime family: %s",cge::runtime::BuildFamily);
         Log("CGE CommonLibSSE-NG bridge ready; validated per-runtime graphics adapters retained");
         std::string error;
         Log("CGE startup stage: creation import");
@@ -122,7 +118,8 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             std::error_code ec;
             if(std::filesystem::exists(virtualLibrary,ec))library=virtualLibrary;
         }
-        Log("CGE runtime adapter: %s; Address Library: %ls; SKSE=0x%08X",cge::runtime::selected.VersionString().c_str(),library.c_str(),api->skseVersion);
+        Log("CGE runtime adapter: %s; family=%s; Address Library: %ls; SKSE=0x%08X",cge::runtime::selected.VersionString().c_str(),cge::runtime::selected.AdapterName(),library.c_str(),api->skseVersion);
+        Log("CGE executable variant: %s",(api->runtimeVersion&15)==1?"GOG":"standard");
         Log("CGE startup stage: scene hook");
         if(cge::startup::HookInterface(GetModuleHandleW(nullptr),library,cge::graphics::Scene,error))
             Log("CGE scene hook ready: DrawInterfaceStart; effects run before HUD and menus");
@@ -137,11 +134,18 @@ __declspec(dllexport) bool SKSEPlugin_Load(const cge::skse::Interface* api) {
             cge::graphics::SetGameHourProbe(cge::startup::PollGameHour);
             Log("CGE day/night clock ready: Calendar");
         }else Log("CGE day/night clock unavailable: %s",error.c_str());
+        if(cge::startup::InitializeWeather(GetModuleHandleW(nullptr),library,error)) {
+            cge::graphics::SetWeatherProbe(cge::startup::PollWeather);
+            Log("CGE weather profiles ready: Sky weather blend");
+        }else Log("CGE weather profiles unavailable: %s",error.c_str());
         Log("CGE startup stage: motion adapter");
         if(cge::startup::InitializeMotion(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetMotionProbe(cge::startup::PollMotion);
             Log("CGE native motion resources ready: Renderer, ImageSpaceManager, UI");
         }else Log("CGE motion resources unavailable: %s",error.c_str());
+        if(cge::startup::HookInput(GetModuleHandleW(nullptr),library,cge::graphics::HandleToggleKey,error))
+            Log("CGE native keyboard toggle ready: default F8; settings in General");
+        else Log("CGE native keyboard toggle unavailable: %s",error.c_str());
         Log("CGE startup stage: depth adapter");
         if(cge::startup::InitializeDepth(GetModuleHandleW(nullptr),library,error)) {
             cge::graphics::SetDepthProbe(cge::startup::PollDepth);

@@ -73,7 +73,7 @@ void Footer(Settings& settings,bool general) {
     }
     if(general) {
         api.sameLine(0,-1);
-        if(Button("Reset All")){settings=Settings{};selectedProfile=0;beforePreset.reset();graphics::ApplySettings(settings);Changed();}
+        if(Button("Reset All")){settings=Settings{};selectedProfile=0;beforePreset.reset();graphics::ApplySettings(settings,true);Changed();}
     }
     if(feedback==Feedback::Saved) {api.sameLine(0,-1);Text("Saved");}
     else if(feedback==Feedback::Failed){api.sameLine(0,-1);Text("Save failed: CGE.ini could not be written.");}
@@ -88,6 +88,11 @@ void Render(unsigned page) noexcept {
         if(page==6 && api.checkbox("Depth of field (all profiles)",&settings.dofAllowed))Changed();
         api.separator();
         if(page==0) {
+            constexpr unsigned scans[]={0,60,61,62,63,64,65,66,67,68,87,88};
+            const char* keys[]={"Disabled","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12","Custom"};
+            int selected=12;for(int i=0;i<12;++i)if(settings.toggleScanCode==scans[i])selected=i;
+            Text("Toggle effects hotkey");
+            if(api.combo("##ToggleKey",&selected,keys,13,-1) && selected>=0 && selected<12){settings.toggleScanCode=scans[selected];Changed();}
             api.beginDisabled(!hudReady);
             if(api.checkbox("Show FPS",&settings.showFps))Changed();
             api.endDisabled();
@@ -126,7 +131,25 @@ void Render(unsigned page) noexcept {
             Control("Dawn (hour)",settings.dayHour,0,11,6);
             Control("Dusk (hour)",settings.nightHour,13,23,20);
             api.endDisabled();
+        }else if(page==21) {
+            if(api.checkbox("Weather profiles enabled",&settings.weather.enabled))Changed();
+            Text("Exterior color, bloom and fog adjustments.");
+            if(view.environment==Environment::Interior)Text("Inactive indoors.");
+            else if(view.weather.valid) {
+                const auto dominant=std::max_element(view.weather.weights.begin(),view.weather.weights.end())-view.weather.weights.begin();
+                Text("Current weather");api.sameLine(0,-1);Text(WeatherNames[dominant]);
+            }else Text(settings.weather.enabled?"Weather data unavailable.":"Weather profiles disabled.");
+            api.beginDisabled(!settings.enabled || !settings.weather.enabled);
+            Control("Weather Transition (sec)",settings.weather.transitionSeconds,0,10,2);
+            static int selectedWeather=0;
+            Text("Edit Weather");
+            if(api.combo("##Weather",&selectedWeather,WeatherNames,4,-1))selectedWeather=std::clamp(selectedWeather,0,3);
+            auto& adjustment=settings.weather.profiles[selectedWeather];
+            WeatherParameters(adjustment,[&](auto,const char* label,float& value,float low,float high,float neutral){Control(label,value,low,high,neutral);});
+            if(Button("Reset Weather")){adjustment=WeatherSettings{}.profiles[selectedWeather];Changed();}
+            api.endDisabled();
         }else if(page==4) {
+            Text("Requires native TAA enabled.");
             if(api.checkbox("Motion blur enabled",&settings.motion.enabled))Changed();
             api.beginDisabled(!settings.enabled || !settings.motion.enabled);
             Control("Intensity",settings.motion.strength,0,10,1);
@@ -336,6 +359,7 @@ void __stdcall LensDirt(){Render(17);}
 void __stdcall LensDistortion(){Render(18);}
 void __stdcall Sharpness(){Render(19);}
 void __stdcall Ssao(){Render(20);}
+void __stdcall Weather(){Render(21);}
 }
 bool Register(std::string& status) {
     if(registered){status="CGE SKSE Menu Framework already registered";return true;}
@@ -377,15 +401,16 @@ bool Register(std::string& status) {
         "Community Graphics Engine/Effects/SSAO","Community Graphics Engine/Effects/Distance Fog","Community Graphics Engine/Effects/Depth of Field",
         "Community Graphics Engine/Effects/Motion Blur","Community Graphics Engine/Effects/Sharpness",
         "Community Graphics Engine/Effects/Clarity","Community Graphics Engine/Effects/Film Grain",
-        "Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Lens Distortion"};
+        "Community Graphics Engine/Effects/Chromatic Aberration","Community Graphics Engine/Effects/Lens Distortion",
+        "Community Graphics Engine/Weather Profiles"};
     const Page pages[]={General,Presets,Profiles,Color,LiftGammaGain,Lut,Vibrance,SplitToning,Vignette,Debanding,
-        Bloom,LensDirt,Ssao,Fog,Dof,Motion,Sharpness,Clarity,FilmGrain,ChromaticAberration,LensDistortion};
-    for(unsigned i=0;i<21;++i)api.addPage(paths[i],pages[i]);
+        Bloom,LensDirt,Ssao,Fog,Dof,Motion,Sharpness,Clarity,FilmGrain,ChromaticAberration,LensDistortion,Weather};
+    for(unsigned i=0;i<22;++i)api.addPage(paths[i],pages[i]);
     const bool overlay=Bind(module,"RegisterHudElement",api.registerHud) &&
         Bind(module,"igGetForegroundDrawList_Nil",api.foreground) && Bind(module,"ImDrawList_AddText_Vec2",api.drawText);
     if(overlay){hudReady=true;if(api.registerHud(FpsOverlay)<0)hudReady=false;}
     registered=true;
-    status="CGE SKSE Menu Framework ready: 21 pages registered; legacy menu and hotkeys removed";
+    status="CGE SKSE Menu Framework ready: 22 pages registered";
     status+=hudReady?"; FPS HUD ready":"; FPS HUD unavailable: missing framework HUD exports";
     return true;
 }

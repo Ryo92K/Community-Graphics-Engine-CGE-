@@ -81,12 +81,31 @@ int main() {
         settings.strength=0.5f;upload();ao.PrepareOcclusion(inputs,settings,true);const auto half=read();
         Check(std::abs(at(half,width/2+1,height/2)-(1+nearContact)/2)<0.0003f,"Strength blends predictably");settings.strength=1;
     }
+    for(int q=0;q<3;++q)for(float search:{80.0f,250.0f})for(unsigned thickness:{1u,2u,4u}) {
+        settings.quality=q;settings.radius=search;settings.power=1.5f;
+        plane(300);for(unsigned y=height/4;y<height*3/4;++y)for(unsigned x=width/2-thickness;x<width/2;++x)encoded[y*width+x]=encode(296);
+        upload();ao.PrepareOcclusion(inputs,settings,true);const auto detail=read();float local=1;
+        for(unsigned y=height/3;y<height*2/3;++y)for(unsigned x=width/2;x<width/2+3;++x)local=std::min(local,at(detail,x,y));
+        std::printf("Thin contact quality=%d radius=%.0f width=%u minimum=%.6f adjacent=%.6f foreground=%.6f\n",q,search,thickness,local,at(detail,width/2,height/2),at(detail,width/2-1,height/2));
+        Check(local<.97f,"Thin objects retain a localized ground contact at every quality and radius");
+        Check(at(detail,width/2-1,height/2)>.995f,"Thin object tops do not inherit the receiver's contact shadow");
+        Check(at(detail,width*7/8,height/2)>.999f,"Thin-object refinement does not darken unrelated surfaces");
+    }
+    settings.quality=2;settings.radius=250;settings.bias=.05f;settings.power=4;
+    plane(300);for(unsigned y=height/4;y<height*3/4;++y)for(unsigned x=width/4;x<width/2;++x)encoded[y*width+x]=encode(298);
+    upload();ao.PrepareOcclusion(inputs,settings,true);const auto fine=read();float fineContact=1;
+    for(unsigned y=height/4;y<height*3/4;++y)for(unsigned x=width/2;x<width/2+8;++x)fineContact=std::min(fineContact,at(fine,x,y));
+    Check(fineContact<.99f,"Large search radius retains fine contacts");
+    plane(5000,.4f);upload();ao.PrepareOcclusion(inputs,settings,true);
+    const auto distantSlope=read();Check(*std::min_element(distantSlope.begin(),distantSlope.end())>.99f,"Distant slope does not self-occlude after fine-contact correction");
+    settings.radius=80;settings.power=1.5f;
     settings.quality=1;contact();
     for(unsigned y=0;y<height;++y)for(unsigned x=0;x<width;++x) {
         const float ray=inputs.top+(float(y)+0.5f)/float(height)*(inputs.bottom-inputs.top);
         encoded[y*width+x]=encode(ray<0?std::min(300.0f,-80.0f/ray):300.0f);
     }
     upload();ao.PrepareOcclusion(inputs,settings,true);const auto corner=read();
+    std::printf("Grazing wall/floor: junction=%.6f floor=%.6f open=%.6f\n",at(corner,width/2,64),at(corner,width/2,70),at(corner,width/2,35));
     Check(at(corner,width/2,64)<0.94f && at(corner,width/2,35)>0.999f,"Perpendicular wall-floor junction has localized contact shadow");
     contact();upload();ao.PrepareOcclusion(inputs,settings,true);const auto nearFive=read();
     inputs.nearPlane=1;contact();upload();ao.PrepareOcclusion(inputs,settings,true);const auto nearOne=read();

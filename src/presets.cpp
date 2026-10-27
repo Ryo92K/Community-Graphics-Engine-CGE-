@@ -78,7 +78,7 @@ const std::array<Preset,5> definitions={
 std::span<const Preset> List() noexcept {return definitions;}
 bool Apply(std::size_t index,Settings& settings) noexcept {
     if(index>=definitions.size())return false;
-    const auto& preset=definitions[index];Settings next;next.motion=settings.motion;next.dofAllowed=settings.dofAllowed;next.showFps=settings.showFps;
+    const auto& preset=definitions[index];Settings next;next.weather=settings.weather;next.toggleScanCode=settings.toggleScanCode;next.motion=settings.motion;next.dofAllowed=settings.dofAllowed;next.showFps=settings.showFps;
     static_cast<ColorSettings&>(next)=preset.shared;
     next.interior=preset.interior;next.exterior=preset.day;next.exteriorNight=preset.night;
     next.separateProfiles=true;next.profilesConfigured=true;next.transitionSeconds=2;

@@ -24,6 +24,14 @@ int wmain(int argc,wchar_t** argv) {
     loaded=Settings::Load(path);Check(loaded.exposure==-0.75f,"Failed save preserves previous config");
     Check(!s.Save(path/"missing"/"CGE.ini"),"Report unwritable path");
 
+    Check(Settings{}.toggleScanCode==66,"F8 is the default hotkey");
+    for(const char* value:{"0","67","255","256","-1","66.5","nan","66junk"}) {
+        {std::ofstream f(path);f<<"[Input]\nToggleScanCode="<<value<<"\n";}
+        const auto keys=Settings::Load(path);
+        const unsigned expected=std::string(value)=="0"?0:std::string(value)=="67"?67:std::string(value)=="255"?255:66;
+        Check(keys.toggleScanCode==expected,"Hotkey scan codes require an integer in range");
+        Check(keys.Save(path) && Settings::Load(path).toggleScanCode==expected,"Hotkey mapping persists");
+    }
     Check(Settings{}.Neutral(),"Neutral defaults");
     auto changed=Settings{};changed.gamma=1.1f;Check(!changed.Neutral(),"Gamma activates rendering");
     changed=Settings{};changed.temperature=1;Check(!changed.Neutral(),"Temperature activates rendering");

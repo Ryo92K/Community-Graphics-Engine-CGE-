@@ -4,6 +4,7 @@
 #include <string>
 #include <filesystem>
 #include "settings.h"
+#include "weather_profiles.h"
 #include "motion_blur.h"
 #include "depth_inputs.h"
 namespace cge::startup {
@@ -14,11 +15,14 @@ bool InitializeEnvironment(HMODULE executable,const std::filesystem::path& libra
 Environment PollEnvironment() noexcept;
 bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std::string& error);
 float PollGameHour() noexcept;
+bool InitializeWeather(HMODULE,const std::filesystem::path&,std::string&);
+WeatherObservation PollWeather() noexcept;
 bool InitializeMotion(HMODULE executable,const std::filesystem::path& library,std::string& error);
 MotionInputs PollMotion() noexcept;
 bool InitializeDepth(HMODULE,const std::filesystem::path&,std::string& error);
 DepthInputs PollDepth() noexcept;
 bool HookTonemap(HMODULE,const std::filesystem::path&,void(*before)(ID3D11ShaderResourceView*) noexcept,std::string& error);
 bool HookOpaque(HMODULE,const std::filesystem::path&,void(*begin)() noexcept,void(*end)() noexcept,std::string& error);
+bool HookInput(HMODULE,const std::filesystem::path&,void(*)(unsigned) noexcept,std::string&);
 void Shutdown() noexcept;
 }

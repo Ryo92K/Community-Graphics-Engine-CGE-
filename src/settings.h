@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <filesystem>
 #include <string>
 namespace cge {
@@ -125,16 +126,31 @@ struct MotionSettings {
     bool operator==(const MotionSettings&) const =default;
     static bool ValidSamples(int value) noexcept {return value==8 || value==12 || value==16;}
 };
+struct WeatherAdjustment {
+    float exposure{},contrast{1},saturation{1},temperature{},bloom{1},fog{1};
+    bool operator==(const WeatherAdjustment&) const =default;
+};
+struct WeatherSettings {
+    bool enabled{};
+    float transitionSeconds{2};
+    std::array<WeatherAdjustment,4> profiles{{{},
+        {-0.12f,1,0.95f,-2,0.9f,1.15f},
+        {-0.2f,1,0.9f,-4,0.8f,1.35f},
+        {0.08f,1,0.94f,-3,1.05f,1.2f}}};
+    bool operator==(const WeatherSettings&) const =default;
+};
 struct Settings:ColorSettings {
     bool enabled{true};
     bool dofAllowed{true};
     bool showFps{false};
+    unsigned toggleScanCode{66};
     bool separateProfiles{false};
     float transitionSeconds{1.5f};
     ColorSettings interior,exterior,exteriorNight;
     float dayHour{6},nightHour{20};
     bool profilesConfigured{};
     MotionSettings motion;
+    WeatherSettings weather;
     void SetSeparateProfiles(bool value) noexcept {
         if(value && !profilesConfigured){interior=exterior=exteriorNight=static_cast<const ColorSettings&>(*this);profilesConfigured=true;}
         separateProfiles=value;

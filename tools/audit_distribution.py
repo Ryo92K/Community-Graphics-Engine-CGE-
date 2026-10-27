@@ -3,6 +3,7 @@
 import hashlib
 
 import json
+import re
 
 from pathlib import Path
 
@@ -57,6 +58,43 @@ names = rva(u32(exports+32))
 actual = {string(rva(u32(names+n*4))) for n in range(u32(exports+24))}
 
 assert actual == {"SKSEPlugin_Load", "SKSEPlugin_Query", "SKSEPlugin_Version"}, actual
+
+ordinals = rva(u32(exports+36))
+functions = rva(u32(exports+28))
+export_addresses = {
+    string(rva(u32(names+n*4))): u32(functions+4*u16(ordinals+n*2))
+    for n in range(u32(exports+24))
+}
+metadata_rva = export_addresses["SKSEPlugin_Version"]
+assert not u32(optional+112) <= metadata_rva < u32(optional+112)+u32(optional+116)
+metadata = rva(metadata_rva)
+assert metadata+0x350 <= len(data), "Truncated static SKSE metadata"
+assert u32(metadata) == 1, "Unsupported SKSE metadata schema"
+version_match = re.search(r"project\(CommunityGraphicsEngine VERSION (\d+)\.(\d+)\.(\d+)", (project / "CMakeLists.txt").read_text())
+assert version_match, "Missing project version"
+major, minor, patch = map(int, version_match.groups())
+assert u32(metadata+4) == (major << 24) | (minor << 16) | (patch << 8), "SKSE plugin version differs from project version"
+compatibility = struct.unpack_from("<16I", data, metadata+0x30C)
+assert 0 in compatibility, "SKSE version list has no terminator"
+listed = compatibility[:compatibility.index(0)]
+assert len(set(listed)) == len(listed), "Duplicate SKSE version declarations"
+assert not any(compatibility[len(listed):]), "Versions after SKSE list terminator are unreachable"
+family = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+assert family in (0, 5, 6, 7)
+pack = lambda minor, build: (1 << 24) | (minor << 16) | (build << 4)
+expected = [pack(5, n) for n in (3,16,23,39,50,53,62,73,80,97)] if family == 5 else []
+if family in (0, 6):
+    expected += [pack(6, n) for n in (317,318,323,342,353,629,640,659,1130,1170,1179)]
+if family in (0, 7):
+    expected += [pack(7, n) for n in (99,104)]
+if family in (0, 6):
+    expected += [pack(6, n) | 1 for n in (659,1179)]
+assert list(listed) == expected, (family, listed, expected)
+assert 0x01064921 not in listed, "Unverified GOG 1.6.1170 must not be declared compatible"
+assert not u32(metadata+0x308) & ~7, "Unsupported SKSE independence flags"
+assert u32(metadata+0x304) & 2, "Missing Address Library V5 declaration"
+assert u32(metadata+0x34C) <= 0x02020020, "Older GOG SKSE blocked by minimum SKSE version"
+print(f"PASS: static SKSE metadata declares exactly the expected runtime family ({family or 'internal'}).")
 
 imports = []
 

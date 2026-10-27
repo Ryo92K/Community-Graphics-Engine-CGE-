@@ -17,6 +17,7 @@ Vec2 hudPosition{};
 std::vector<bool> disabledStack;
 struct ObservedControl {int type;std::string label;bool disabled;};
 std::vector<ObservedControl> controls;
+std::vector<std::string> texts;
 std::string id,actionLabel;
 int action{};float value{};
 bool Match(int type,const char* label) {
@@ -50,7 +51,8 @@ __declspec(dllexport) bool igButton(const char* label,Vec2){return Match(5,label
 __declspec(dllexport) bool igCombo_Str_arr(const char* label,int* p,const char* const*,int,int) {
     if(Match(4,label)){*p=static_cast<int>(value);return true;}return false;
 }
-__declspec(dllexport) void igTextUnformatted(const char*,const char*){}
+__declspec(dllexport) void igTextUnformatted(const char* text,const char*){texts.emplace_back(text);}
+__declspec(dllexport) bool TestHasText(const char* text){for(const auto& value:texts)if(value==text)return true;return false;}
 __declspec(dllexport) void igSeparator(){}
 __declspec(dllexport) void igSameLine(float,float){}
 __declspec(dllexport) void igSetNextItemWidth(float){}
@@ -73,7 +75,7 @@ __declspec(dllexport) int TestControlDisabled(int type,const char* label) {
 __declspec(dllexport) bool TestRender(const char* path) {
     for(auto& page:pages)if(page.first==path){
         if(disabled || !disabledStack.empty())return false;
-        controls.clear();page.second();return !disabled && disabledStack.empty();
+        controls.clear();texts.clear();page.second();return !disabled && disabledStack.empty();
     }return false;
 }
 }

@@ -84,6 +84,11 @@ int main() {
     Check(pixel(16)==255,"Master switch bypasses motion");
     motion.inputs.depth.Reset();stripe();renderer.Draw(output.Get(),color,true,motion,&state);
     Check(state==MotionState::Unsupported && pixel(16)==255,"Missing depth is safely bypassed");
+    const auto rejection=renderer.TakeMotionDiagnostics();
+    Check(rejection.find("depth {missing}")!=std::string::npos && rejection.find("output=32x16")!=std::string::npos,
+        "Rejected buffers report the missing input and output dimensions");
+    stripe();renderer.Draw(output.Get(),color,true,motion,&state);
+    Check(renderer.TakeMotionDiagnostics().empty(),"Unchanged rejected buffers do not repeat diagnostics each frame");
     device->CreateShaderResourceView(depth.Get(),nullptr,&motion.inputs.depth);
     color.exposure=-1;stripe();renderer.Draw(output.Get(),color,true,motion);
     Check(pixel(16)>5 && pixel(16)<120,"Motion follows color grading without overriding exposure");

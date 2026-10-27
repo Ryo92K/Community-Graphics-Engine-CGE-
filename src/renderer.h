@@ -4,6 +4,7 @@
 #include "lut.h"
 #include "motion_blur.h"
 #include <d3d11_1.h>
+#include <dxgi1_4.h>
 #include <wrl/client.h>
 #include <string>
 #include <chrono>
@@ -34,6 +35,7 @@ class Renderer {
     bool PrepareLut(const LutSettings&);
     unsigned width_{},height_{};
     DXGI_FORMAT format_{DXGI_FORMAT_UNKNOWN};
+    DXGI_COLOR_SPACE_TYPE colorSpace_{DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709};
     ComPtr<ID3D11Texture2D> motionReadback_;
     ComPtr<ID3D11Query> motionReadbackDone_;
     bool motionReadPending_{},motionDiagnosticActive_{};
@@ -43,7 +45,7 @@ class Renderer {
     unsigned sampledWidth_{},sampledHeight_{};
     DXGI_FORMAT sampledFormat_{DXGI_FORMAT_UNKNOWN};
     float sampledExposure_{},sampledRadius_{};
-    std::string motionDiagnostic_;
+    std::string motionDiagnostic_,motionRejection_;
     std::chrono::steady_clock::time_point grainStart_;
     void PollMotionReadback();
     void CaptureMotionReadback(const MotionPass&,float exposure);
@@ -52,6 +54,7 @@ public:
     void ReloadLut(){lutFile_.clear();lutStatus_.clear();lutFailure_.clear();lutActiveStatus_.clear();lutLoaded_=false;lutView_.Reset();lutData_={};}
     const std::string& LutStatus() const noexcept{return lutStatus_;}
     void ReleaseOutput() noexcept {output_.Reset();}
+    void SetColorSpace(DXGI_COLOR_SPACE_TYPE value) noexcept {colorSpace_=value;output_.Reset();}
     bool Initialize(ID3D11Device*,std::string& error);
     std::string TakeMotionDiagnostics();
     std::string Draw(ID3D11Texture2D*,const ColorSettings&,bool enabled,const MotionPass& motion={},MotionState* state=nullptr,std::optional<std::uint32_t> grainFrame={});

@@ -2,6 +2,7 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 #include <cmath>
+#include "camera_pose.h"
 namespace cge {
 enum class DepthState {Unavailable,CameraUnavailable,Ready};
 struct DepthInputs {
@@ -9,6 +10,7 @@ struct DepthInputs {
     float nearPlane{},farPlane{};
     DepthState state{DepthState::Unavailable};
     float left{},right{},top{},bottom{};
+    CameraPose camera;
     bool ValidFrustum() const noexcept {
         return std::isfinite(left) && std::isfinite(right) && std::isfinite(top) && std::isfinite(bottom) &&
             left<right && bottom<top && right-left>0.01f && top-bottom>0.01f &&

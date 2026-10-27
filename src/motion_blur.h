@@ -20,6 +20,9 @@ inline const char* MotionLabel(MotionState state) noexcept {
 struct MotionInputs {
     Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> velocity,depth;
     MotionState state{MotionState::Unavailable};
+    const char* probeStatus{"Not sampled"};
+    unsigned char taa{255};
+    bool worldTaa{};
 };
 struct MotionPass {
     MotionInputs inputs;

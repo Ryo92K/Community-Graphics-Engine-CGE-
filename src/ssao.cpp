@@ -17,7 +17,8 @@ bool SsaoRenderer::Initialize(ID3D11Device* device,std::string& error) {
     }
     auto compile=[&](const char* entry,const char* profile,Ptr<ID3DBlob>& blob) {
         Ptr<ID3DBlob> messages;
-        if(SUCCEEDED(D3DCompile(CgeSsaoSource,sizeof(CgeSsaoSource)-1,"SSAO.hlsl",nullptr,nullptr,entry,profile,
+        const D3D_SHADER_MACRO computeDefines[]={{"CGE_TEMPORAL_COMPUTE","1"},{nullptr,nullptr}};
+        if(SUCCEEDED(D3DCompile(CgeSsaoSource,sizeof(CgeSsaoSource)-1,"SSAO.hlsl",profile[0]=='c'?computeDefines:nullptr,nullptr,entry,profile,
             D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&blob,&messages)))return true;
         error=messages?std::string(static_cast<const char*>(messages->GetBufferPointer()),messages->GetBufferSize()):"SSAO shader compilation failed";
         return false;
@@ -26,9 +27,9 @@ bool SsaoRenderer::Initialize(ID3D11Device* device,std::string& error) {
     if(!compile("SsaoVertex","vs_5_0",vs) || !compile("GeometryPixel","ps_5_0",ps) ||
         FAILED(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex_)) ||
         FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&geometryPixel_)))return false;
-    const char* entries[]={"OcclusionPixel","OcclusionPixelReduced","FilterPixel","AmbientPixel","FilterAmbientPixel"};
-    Ptr<ID3D11PixelShader>* shaders[]={&aoPixel_,&aoReducedPixel_,&filterPixel_,&ambientPixel_,&filterAmbientPixel_};
-    for(unsigned i=0;i<5;++i) {
+    const char* entries[]={"OcclusionPixel","OcclusionPixelReduced","FilterPixel","AmbientPixel","FilterAmbientPixel","TemporalPixel","TemporalCachedPixel"};
+    Ptr<ID3D11PixelShader>* shaders[]={&aoPixel_,&aoReducedPixel_,&filterPixel_,&ambientPixel_,&filterAmbientPixel_,&temporalPixel_,&temporalCachedPixel_};
+    for(unsigned i=0;i<7;++i) {
         ps.Reset();if(!compile(entries[i],"ps_5_0",ps) || FAILED(device->CreatePixelShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,shaders[i]->GetAddressOf())))return false;
     }
     D3D11_BUFFER_DESC buffer{};buffer.ByteWidth=80;buffer.Usage=D3D11_USAGE_DEFAULT;buffer.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
@@ -37,20 +38,33 @@ bool SsaoRenderer::Initialize(ID3D11Device* device,std::string& error) {
         FAILED(device->CreateRasterizerState(&raster,&raster_))) {
         error="SSAO pipeline allocation failed";return false;
     }
-    ready_=true;return true;
+    buffer.ByteWidth=80;
+    if(FAILED(device_->CreateBuffer(&buffer,nullptr,&temporalConstants_))) {error="SSAO temporal constants unavailable";return false;}
+    UINT support{};
+    if(SUCCEEDED(device_->CheckFormatSupport(DXGI_FORMAT_R32_FLOAT,&support)) &&
+        (support&D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW) && compile("TemporalCompute","cs_5_0",ps))
+        computeAvailable_=SUCCEEDED(device_->CreateComputeShader(ps->GetBufferPointer(),ps->GetBufferSize(),nullptr,&temporalCompute_));
+    error.clear();ready_=true;return true;
 }
 void SsaoRenderer::ReleaseTargets() noexcept {
     geometry_=Surface{};linearDepth_=Surface{};guide_=Surface{};ao_=Surface{};ping_=Surface{};ambient_=Surface{};
+    previousGeometry_=Surface{};history_=Surface{};temporal_=Surface{};
+    historyValid_=temporalOutput_=false;temporalFrame_=0;
     width_=height_=aoWidth_=aoHeight_=0;
 }
-bool SsaoRenderer::MakeSurface(Surface& surface,unsigned w,unsigned h,DXGI_FORMAT format) {
+bool SsaoRenderer::MakeSurface(Surface& surface,unsigned w,unsigned h,DXGI_FORMAT format,bool unordered) {
     D3D11_TEXTURE2D_DESC d{};d.Width=w;d.Height=h;d.MipLevels=d.ArraySize=d.SampleDesc.Count=1;
     d.Format=format;d.Usage=D3D11_USAGE_DEFAULT;d.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_RENDER_TARGET;
+    if(unordered)d.BindFlags|=D3D11_BIND_UNORDERED_ACCESS;
     return SUCCEEDED(device_->CreateTexture2D(&d,nullptr,&surface.texture)) &&
         SUCCEEDED(device_->CreateShaderResourceView(surface.texture.Get(),nullptr,&surface.view)) &&
-        SUCCEEDED(device_->CreateRenderTargetView(surface.texture.Get(),nullptr,&surface.target));
+        SUCCEEDED(device_->CreateRenderTargetView(surface.texture.Get(),nullptr,&surface.target)) &&
+        (!unordered || SUCCEEDED(device_->CreateUnorderedAccessView(surface.texture.Get(),nullptr,&surface.unordered)));
 }
 std::string SsaoRenderer::PrepareOcclusion(const DepthInputs& inputs,const SsaoSettings& settings,bool enabled) {
+    temporalOutput_=false;
+    bool completed=false;
+    struct Invalidate {bool& completed;bool& valid;~Invalidate(){if(!completed)valid=false;}} invalidation{completed,historyValid_};
     if(!enabled || !settings.enabled || settings.strength<=0){ReleaseTargets();return "Off";}
     if(!std::isfinite(settings.strength) || !std::isfinite(settings.radius) || !std::isfinite(settings.bias) ||
         !std::isfinite(settings.power) || !std::isfinite(settings.maxDistance) || settings.quality<0 || settings.quality>2)
@@ -68,12 +82,18 @@ std::string SsaoRenderer::PrepareOcclusion(const DepthInputs& inputs,const SsaoS
     if(FAILED(resource.As(&texture)))return "Depth texture unavailable";
     D3D11_TEXTURE2D_DESC depth{};texture->GetDesc(&depth);
     if(!depth.Width || !depth.Height || depth.ArraySize!=1 || depth.SampleDesc.Count!=1)return "Unsupported depth dimensions";
+    auto makeLinearDepth=[&] {
+        if(MakeSurface(linearDepth_,depth.Width,depth.Height,DXGI_FORMAT_R32_FLOAT,computeAvailable_))return true;
+        if(!computeAvailable_)return false;
+        computeAvailable_=false;linearDepth_=Surface{};
+        return MakeSurface(linearDepth_,depth.Width,depth.Height,DXGI_FORMAT_R32_FLOAT);
+    };
     const unsigned aoWidth=settings.quality==0?(depth.Width+1)/2:depth.Width;
     const unsigned aoHeight=settings.quality==0?(depth.Height+1)/2:depth.Height;
     if(!geometry_.texture || width_!=depth.Width || height_!=depth.Height || aoWidth_!=aoWidth || aoHeight_!=aoHeight) {
         ReleaseTargets();
         if(!MakeSurface(geometry_,depth.Width,depth.Height,DXGI_FORMAT_R32G32B32A32_FLOAT) ||
-            !MakeSurface(linearDepth_,depth.Width,depth.Height,DXGI_FORMAT_R32_FLOAT) ||
+            !makeLinearDepth() ||
             (settings.quality==0 && !MakeSurface(guide_,aoWidth,aoHeight,DXGI_FORMAT_R32G32B32A32_FLOAT)) ||
             !MakeSurface(ao_,aoWidth,aoHeight,DXGI_FORMAT_R16_FLOAT) ||
             !MakeSurface(ping_,aoWidth,aoHeight,DXGI_FORMAT_R16_FLOAT) ||
@@ -82,6 +102,15 @@ std::string SsaoRenderer::PrepareOcclusion(const DepthInputs& inputs,const SsaoS
         }
         width_=depth.Width;height_=depth.Height;aoWidth_=aoWidth;aoHeight_=aoHeight;
     }
+    const std::array<float,6> projection{inputs.left,inputs.right,inputs.top,inputs.bottom,inputs.nearPlane,inputs.farPlane};
+    bool temporalAvailable=inputs.camera.Valid();
+    if(temporalAvailable && (!previousGeometry_.view || !history_.view || !temporal_.view) &&
+        (!MakeSurface(previousGeometry_,width_,height_,DXGI_FORMAT_R32G32B32A32_FLOAT) ||
+         !MakeSurface(history_,width_,height_,DXGI_FORMAT_R16_FLOAT) || !MakeSurface(temporal_,width_,height_,DXGI_FORMAT_R16_FLOAT))) {
+        previousGeometry_=Surface{};history_=Surface{};temporal_=Surface{};historyValid_=false;temporalAvailable=false;
+    }
+    const bool consistent=temporalAvailable && temporalFrame_>0 && settings==previousSettings_ && projection==previousProjection_ &&
+        CompatibleCameraMotion(previousCamera_,inputs.camera,settings.radius);
     struct Restore {
         ID3D11DeviceContext1* context;Ptr<ID3DDeviceContextState> previous;
         Restore(ID3D11DeviceContext1* c,ID3DDeviceContextState* state):context(c){c->SwapDeviceContextState(state,&previous);}
@@ -95,7 +124,7 @@ std::string SsaoRenderer::PrepareOcclusion(const DepthInputs& inputs,const SsaoS
     static_assert(sizeof(Controls)==80);
     Controls controls{inputs.nearPlane,inputs.farPlane,std::clamp(settings.strength,0.0f,1.0f),
         std::clamp(settings.radius,1.0f,250.0f),std::clamp(settings.bias,0.01f,0.3f),std::clamp(settings.power,1.0f,4.0f),
-        std::clamp(settings.maxDistance,500.0f,50000.0f),0,
+        std::clamp(settings.maxDistance,500.0f,50000.0f),consistent?float(temporalFrame_%64)*0.61803398875f:0,
         {inputs.left,inputs.top,inputs.right-inputs.left,inputs.bottom-inputs.top},
         {width_,height_},{aoWidth_,aoHeight_},settings.quality==2?16u:settings.quality==1?12u:8u,
         settings.quality==2?8u:settings.quality==1?6u:4u,{0,0}};
@@ -127,6 +156,41 @@ std::string SsaoRenderer::PrepareOcclusion(const DepthInputs& inputs,const SsaoS
         pass(filterPixel_.Get(),ao_.target.Get(),aoWidth_,aoHeight_,geometry_.view.Get(),ping_.view.Get());
         pass(ambientPixel_.Get(),ambient_.target.Get(),width_,height_,geometry_.view.Get(),ao_.view.Get());
     }else pass(filterAmbientPixel_.Get(),ambient_.target.Get(),width_,height_,geometry_.view.Get(),ping_.view.Get());
-    return "Native ambient occlusion ready";
+    if(temporalAvailable) {
+        const bool reuse=historyValid_ && consistent;
+        struct TemporalControls {float transform[12],previousRays[4];unsigned reuse,width,height,pad;};
+        static_assert(sizeof(TemporalControls)==80);
+        TemporalControls temporalControls{};
+        const auto transform=PreviousCameraTransform(previousCamera_,inputs.camera);
+        std::copy(transform.begin(),transform.end(),temporalControls.transform);
+        temporalControls.previousRays[0]=previousProjection_[0];temporalControls.previousRays[1]=previousProjection_[2];
+        temporalControls.previousRays[2]=previousProjection_[1]-previousProjection_[0];
+        temporalControls.previousRays[3]=previousProjection_[3]-previousProjection_[2];
+        temporalControls.reuse=reuse?1u:0u;temporalControls.width=width_;temporalControls.height=height_;
+        ID3D11ShaderResourceView* clear[9]{};context_->PSSetShaderResources(0,9,clear);context_->OMSetRenderTargets(0,nullptr,nullptr);
+        context_->UpdateSubresource(temporalConstants_.Get(),0,nullptr,&temporalControls,0,0);
+        auto* temporalBuffer=temporalConstants_.Get();
+        const bool cacheNeighborhood=computeAvailable_ && settings.quality!=2 && reuse;
+        if(cacheNeighborhood) {
+            auto* constants=constants_.Get();context_->CSSetConstantBuffers(0,1,&constants);
+            ID3D11ShaderResourceView* views[]={ambient_.view.Get(),nullptr,geometry_.view.Get()};
+            context_->CSSetShaderResources(0,3,views);auto* target=linearDepth_.unordered.Get();
+            context_->CSSetUnorderedAccessViews(0,1,&target,nullptr);context_->CSSetShader(temporalCompute_.Get(),nullptr,0);
+            context_->Dispatch((width_+15)/16,(height_+7)/8,1);
+            ID3D11ShaderResourceView* empty[3]{};ID3D11UnorderedAccessView* noTarget{};
+            context_->CSSetShaderResources(0,3,empty);context_->CSSetUnorderedAccessViews(0,1,&noTarget,nullptr);
+        }
+        context_->PSSetConstantBuffers(1,1,&temporalBuffer);
+        ID3D11ShaderResourceView* views[]={ambient_.view.Get(),nullptr,geometry_.view.Get(),nullptr,nullptr,nullptr,history_.view.Get(),previousGeometry_.view.Get(),cacheNeighborhood?linearDepth_.view.Get():nullptr};
+        context_->PSSetShaderResources(0,9,views);
+        auto* target=temporal_.target.Get();context_->OMSetRenderTargets(1,&target,nullptr);
+        const D3D11_VIEWPORT viewport{0,0,float(width_),float(height_),0,1};context_->RSSetViewports(1,&viewport);
+        context_->PSSetShader(cacheNeighborhood?temporalCachedPixel_.Get():temporalPixel_.Get(),nullptr,0);context_->Draw(3,0);
+        std::swap(history_,temporal_);
+        std::swap(previousGeometry_,geometry_);
+        previousCamera_=inputs.camera;previousSettings_=settings;previousProjection_=projection;
+        historyValid_=temporalOutput_=true;++temporalFrame_;
+    }else historyValid_=false;
+    completed=true;return "Native ambient occlusion ready";
 }
 }

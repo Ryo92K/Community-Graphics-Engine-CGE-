@@ -85,7 +85,12 @@ public:
     HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F* matrix) override{return v2_?v2_->GetMatrixTransform(matrix):E_NOINTERFACE;}
     UINT STDMETHODCALLTYPE GetCurrentBackBufferIndex() override{return v3_?v3_->GetCurrentBackBufferIndex():0;}
     HRESULT STDMETHODCALLTYPE CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE color,UINT* flags) override{return v3_?v3_->CheckColorSpaceSupport(color,flags):E_NOINTERFACE;}
-    HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE color) override{return v3_?v3_->SetColorSpace1(color):E_NOINTERFACE;}
+    HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE color) override {
+        if(!v3_)return E_NOINTERFACE;
+        const auto result=v3_->SetColorSpace1(color);
+        if(SUCCEEDED(result))SetOutputColorSpace(base_.Get(),color);
+        return result;
+    }
     HRESULT STDMETHODCALLTYPE ResizeBuffers1(UINT count,UINT width,UINT height,DXGI_FORMAT format,UINT flags,const UINT* masks,IUnknown*const* queues) override {
         if(!v3_)return E_NOINTERFACE;
         BeforeResize(base_.Get());

@@ -34,14 +34,23 @@ struct Host {
     Reporter report;
     unsigned width{},height{};
     std::string status,lutStatus;
-    bool sceneProcessed{};
+    bool sceneProcessed{},ssaoPrepared{};
+    bool ssaoTemporal{},ssaoTemporalReported{};
+    float ssaoHour{-1};
     ProfileTransition transition;
+    WeatherTransition weatherTransition;
+    WeatherObservation weather;
+    float weatherPollSeconds{};
+    WeatherObservation(*weatherProbe)() noexcept{};
     Environment(*probe)() noexcept{};
     float(*hourProbe)() noexcept{};
     MotionInputs(*motionProbe)() noexcept{};
     DepthInputs(*depthProbe)() noexcept{};
     MotionState motionState{MotionState::Off};
     bool motionWasEnabled{};
+    const char* motionProbeStatus{};
+    unsigned char motionTaa{255};
+    bool motionWorldTaa{};
     MotionSettings reportedMotion;
     bool motionSettingsReported{};
     unsigned motionWarmup{2};
@@ -65,6 +74,12 @@ void Prepare(Host& host) {
     const float seconds=std::clamp(frameSeconds,0.0f,0.1f);
     host.lastScene=now;
     host.color=host.transition.Update(host.settings,environment,seconds,hour);
+    host.weatherPollSeconds-=seconds;
+    if(changedLocation)host.weatherPollSeconds=0;
+    if(host.settings.weather.enabled && environment==Environment::Exterior && host.weatherProbe) {
+        if(host.weatherPollSeconds<=0){host.weather=host.weatherProbe();host.weatherPollSeconds=0.1f;}
+    }else {host.weather={};host.weatherPollSeconds=0;}
+    host.color=host.weatherTransition.Update(host.color,host.settings.weather,environment,host.weather,seconds);
     host.frameSeconds=frameSeconds;host.hour=hour;host.changedLocation=changedLocation;
 }
                                                                                        
@@ -72,8 +87,9 @@ Host& Data(){static auto* host=new Host;return *host;}
 }
 bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::path& directory,Reporter report) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain)return false;
+    host.motionProbeStatus=nullptr;host.motionTaa=255;host.motionWorldTaa=false;
     host.fps=FpsCounter{};host.motionWarmup=2;host.motionWasEnabled=false;host.previousHour=-1;host.motionState=MotionState::Off;
-    host.transition.Reset();host.environment=Environment::Unknown;host.lastScene=std::chrono::steady_clock::now();
+    host.transition.Reset();host.weatherTransition.Reset();host.weather={};host.environment=Environment::Unknown;host.lastScene=std::chrono::steady_clock::now();
     host.settingsPath=directory/"CGE.ini";host.settings=Settings::Load(host.settingsPath);host.report=std::move(report);
     std::string error;
     if(host.report)host.report("CGE startup stage: initializing SDR shaders");
@@ -88,7 +104,7 @@ bool Attach(IDXGISwapChain* chain,ID3D11Device* device,const std::filesystem::pa
     if(!host.fog.Initialize(device,error) && host.report)host.report("CGE fog initialization failed: "+error);
     if(!host.bloom.Initialize(device,error) && host.report)host.report("CGE bloom initialization failed: "+error);
     DXGI_SWAP_CHAIN_DESC desc{};if(FAILED(chain->GetDesc(&desc))){host.renderer=Renderer{};return false;}
-    host.prepared=host.hdrProcessed=false;
+    host.prepared=host.hdrProcessed=host.ssaoPrepared=host.ssaoTemporal=host.ssaoTemporalReported=false;host.ssaoHour=-1;
     host.ambientAvailable=ambient::Attach(device,error);
     if(host.report)host.report(host.ambientAvailable?"CGE native ambient shader hooks ready":"CGE native ambient unavailable: "+error);
     host.sceneProcessed=false;host.chain=chain;host.width=desc.BufferDesc.Width;host.height=desc.BufferDesc.Height;
@@ -99,7 +115,12 @@ void Detach(IDXGISwapChain* chain) {
     ambient::Detach();host.ambientAvailable=false;host.ssao=SsaoRenderer{};host.ssaoStatus.clear();host.renderer=Renderer{};host.bloom=BloomRenderer{};host.fog=FogRenderer{};host.dof=DepthOfFieldRenderer{};host.dofStatus.clear();host.fogStatus.clear();host.bloomStatus.clear();host.chain=nullptr;host.status.clear();host.lutStatus.clear();
 }
 void BeforeResize(IDXGISwapChain* chain) {
-    auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain==chain)host.renderer.ReleaseOutput();
+    auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain==chain){host.renderer.ReleaseOutput();host.ssao.ResetHistory();host.ssaoPrepared=false;}
+}
+void SetOutputColorSpace(IDXGISwapChain* chain,DXGI_COLOR_SPACE_TYPE color) {
+    auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
+    host.renderer.SetColorSpace(color);
+    if(host.report)host.report("CGE output color space="+std::to_string(static_cast<unsigned>(color)));
 }
 void UpdateDimensions(IDXGISwapChain* chain) {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
@@ -111,6 +132,9 @@ void SetEnvironmentProbe(Environment(*probe)() noexcept) {
 }
 void SetGameHourProbe(float(*probe)() noexcept) {
     auto& host=Data();std::lock_guard lock(host.mutex);host.hourProbe=probe;
+}
+void SetWeatherProbe(WeatherObservation(*probe)() noexcept) {
+    auto& host=Data();std::lock_guard lock(host.mutex);host.weatherProbe=probe;
 }
 void SetMotionProbe(MotionInputs(*probe)() noexcept) {
     auto& host=Data();std::lock_guard lock(host.mutex);host.motionProbe=probe;
@@ -125,9 +149,22 @@ void BeginOpaque() noexcept {
         if(!host.chain || !host.ambientAvailable)return;
         Prepare(host);
         const bool active=host.settings.enabled && host.environment!=Environment::Unknown;
+        if(host.ssaoPrepared) {
+            if(host.ssaoStatus=="Native ambient occlusion ready")ambient::Begin(host.ssao.Occlusion());
+            return;
+        }
+        host.ssaoPrepared=true;
+        float hourDifference=host.hour>=0 && host.ssaoHour>=0?std::abs(host.hour-host.ssaoHour):0;
+        hourDifference=std::min(hourDifference,24-hourDifference);
+        if(host.changedLocation || host.frameSeconds<=0 || host.frameSeconds>0.1f || hourDifference>0.5f)host.ssao.ResetHistory();
+        host.ssaoHour=host.hour;
         DepthInputs depth;
         if(active && host.color.ssao.enabled && host.color.ssao.strength>0 && host.depthProbe)depth=host.depthProbe();
         auto status=host.ssao.PrepareOcclusion(depth,host.color.ssao,active);
+        const bool temporal=host.ssao.TemporalActive();
+        if((!host.ssaoTemporalReported || temporal!=host.ssaoTemporal) && host.report)
+            host.report(temporal?"CGE SSAO temporal: camera reprojection available":"CGE SSAO temporal: spatial fallback");
+        host.ssaoTemporal=temporal;host.ssaoTemporalReported=true;
         if(status=="Native ambient occlusion ready")ambient::Begin(host.ssao.Occlusion());
         if(status!=host.ssaoStatus) {
             host.ssaoStatus=status;if(host.report)host.report("CGE SSAO: "+status);
@@ -191,6 +228,13 @@ void Scene() noexcept {
         host.motionWasEnabled=motionEnabled;
         if(motionEnabled && environment!=Environment::Unknown && host.motionProbe)motion.inputs=host.motionProbe();
         else motion.inputs.state=motionEnabled?MotionState::Unavailable:MotionState::Off;
+        if(motionEnabled && (host.motionProbeStatus!=motion.inputs.probeStatus ||
+            host.motionTaa!=motion.inputs.taa || host.motionWorldTaa!=motion.inputs.worldTaa)) {
+            host.motionProbeStatus=motion.inputs.probeStatus;host.motionTaa=motion.inputs.taa;
+            host.motionWorldTaa=motion.inputs.worldTaa;
+            if(host.report)host.report(std::string("CGE motion probe: ")+motion.inputs.probeStatus+
+                ", TAA="+std::to_string(motion.inputs.taa)+", source="+(motion.inputs.worldTaa?"world":"interface"));
+        }
         if(motion.inputs.state==MotionState::Ready) {
             if(menu::IsBlocking() || frameSeconds>0.1f)motion.inputs.state=MotionState::Paused;
             else if(host.motionWarmup){--host.motionWarmup;motion.inputs.state=MotionState::Warming;}
@@ -217,13 +261,13 @@ float OverlayFps() noexcept {
 bool ReadSettings(SettingsView& view) {
     auto& host=Data();std::lock_guard lock(host.mutex);
     if(!host.chain)return false;
-    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus,host.dofStatus,host.renderer.LutStatus(),host.ssaoStatus};return true;
+    view={host.settings,host.environment,host.hour,host.motionState,host.bloomStatus,host.fogStatus,host.dofStatus,host.renderer.LutStatus(),host.ssaoStatus,host.weather};return true;
 }
 void ApplySettings(const Settings& settings,bool resetProfiles) {
     auto& host=Data();std::lock_guard lock(host.mutex);
     if(host.chain) {
         host.settings=settings;
-        if(resetProfiles){host.transition.Reset();host.motionWarmup=2;}
+        if(resetProfiles){host.transition.Reset();host.weatherTransition.Reset();host.weatherPollSeconds=0;host.motionWarmup=2;host.ssao.ResetHistory();}
     }
 }
 std::filesystem::path LutDirectory() {
@@ -232,14 +276,27 @@ std::filesystem::path LutDirectory() {
 void ReloadLuts() {
     auto& host=Data();std::lock_guard lock(host.mutex);host.renderer.ReloadLut();
 }
+void HandleToggleKey(unsigned key) noexcept {
+    try {
+        auto& host=Data();std::lock_guard lock(host.mutex);
+        if(!host.chain || !key || key!=host.settings.toggleScanCode || menu::IsBlocking())return;
+        host.settings.enabled=!host.settings.enabled;host.motionWarmup=2;host.ssao.ResetHistory();
+        if(host.report)host.report(std::string("CGE hotkey: effects ")+(host.settings.enabled?"On":"Off"));
+        if(!host.settings.Save(host.settingsPath) && host.report)host.report("CGE hotkey: settings save failed");
+    }catch(...){}
+}
 bool SaveSettings() {
     auto& host=Data();std::lock_guard lock(host.mutex);
     return host.chain && host.settings.Save(host.settingsPath);
+}
+void ResetSsaoHistory() noexcept {
+    auto& host=Data();std::lock_guard lock(host.mutex);host.ssao.ResetHistory();host.ssaoPrepared=false;host.weatherTransition.Reset();host.weatherPollSeconds=0;host.weather={};
 }
 void Frame(IDXGISwapChain* chain) noexcept {
     auto& host=Data();std::lock_guard lock(host.mutex);if(host.chain!=chain)return;
                                                                                      
     host.fps.Tick(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
-    ambient::End();host.sceneProcessed=host.prepared=host.hdrProcessed=false;
+    ambient::End();if(!host.ssaoPrepared)host.ssao.ResetHistory();
+    host.sceneProcessed=host.prepared=host.hdrProcessed=host.ssaoPrepared=false;
 }
 }

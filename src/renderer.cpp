@@ -158,14 +158,29 @@ std::string Renderer::Draw(ID3D11Texture2D* buffer,const ColorSettings& settings
     bool blur=enabled && motion.settings.enabled && state==MotionState::Ready && exposure>0;
     if(blur && (!compatible(motion.inputs.velocity.Get(),true) || !compatible(motion.inputs.depth.Get(),false))) {
         blur=false;state=MotionState::Unsupported;
-    }
+        auto describe=[](ID3D11ShaderResourceView* view) {
+            if(!view)return std::string("missing");
+            D3D11_SHADER_RESOURCE_VIEW_DESC v{};view->GetDesc(&v);
+            ComPtr<ID3D11Resource> resource;view->GetResource(&resource);ComPtr<ID3D11Texture2D> texture;
+            D3D11_TEXTURE2D_DESC d{};if(SUCCEEDED(resource.As(&texture)))texture->GetDesc(&d);
+            return std::string("format=")+std::to_string(v.Format)+", view="+std::to_string(v.ViewDimension)+
+                ", mip="+std::to_string(v.Texture2D.MostDetailedMip)+", size="+std::to_string(d.Width)+"x"+std::to_string(d.Height)+
+                ", samples="+std::to_string(d.SampleDesc.Count)+", array="+std::to_string(d.ArraySize);
+        };
+        const auto rejection=std::string("CGE motion buffers rejected: velocity {")+describe(motion.inputs.velocity.Get())+
+            "}, depth {"+describe(motion.inputs.depth.Get())+"}, output="+std::to_string(desc.Width)+"x"+std::to_string(desc.Height);
+        if(rejection!=motionRejection_){motionRejection_=rejection;motionDiagnostic_=rejection;}
+    }else if(blur)motionRejection_.clear();
     if(motionState)*motionState=state;
     const bool distortion=enabled && settings.lensDistortion.enabled && std::isfinite(settings.lensDistortion.amount) && settings.lensDistortion.amount!=0;
     const bool process=color || blur || distortion;
     if(!process){output_.Reset();return "idle";}
     if(!context_ || !isolated_)return "renderer unavailable";
+    if(colorSpace_!=DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709) {
+        output_.Reset();return "unsupported output color space="+std::to_string(static_cast<unsigned>(colorSpace_))+"; SDR G22 P709 required";
+    }
     if(desc.SampleDesc.Count!=1 || desc.ArraySize!=1 || desc.MipLevels!=1 ||
-        (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM))
+        (desc.Format!=DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format!=DXGI_FORMAT_B8G8R8A8_UNORM && desc.Format!=DXGI_FORMAT_R10G10B10A2_UNORM))
     {
         const char* format=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM?"R10G10B10A2_UNORM":
             desc.Format==DXGI_FORMAT_R16G16B16A16_FLOAT?"R16G16B16A16_FLOAT":

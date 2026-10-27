@@ -5,8 +5,8 @@
                                                            
                                                                                              
 namespace cge::skse {
-constexpr std::uint32_t Runtime=(1u<<24)|(7u<<16)|(104u<<4);
-constexpr std::uint32_t Version=(7u<<16)|(1u<<8);
+constexpr std::uint32_t Runtime=runtime::DefaultVersion;
+constexpr std::uint32_t Version=(8u<<16);
 struct Interface {
     std::uint32_t skseVersion,runtimeVersion,editorVersion,isEditor;
     void* (*queryInterface)(std::uint32_t){};
@@ -32,6 +32,21 @@ struct Metadata {
     std::uint32_t versionIndependenceEx,versionIndependence;
     std::uint32_t compatibleVersions[16],minimumSkse;
 };
+constexpr Metadata BuildMetadata() noexcept {
+    Metadata result{1,Version,"Community Graphics Engine","CGE contributors","",2,0,{},0};
+    constexpr std::uint32_t versions[]={
+        runtime::Pack(5,3),runtime::Pack(5,16),runtime::Pack(5,23),runtime::Pack(5,39),runtime::Pack(5,50),
+        runtime::Pack(5,53),runtime::Pack(5,62),runtime::Pack(5,73),runtime::Pack(5,80),runtime::Pack(5,97),
+        runtime::Pack(6,317),runtime::Pack(6,318),runtime::Pack(6,323),runtime::Pack(6,342),runtime::Pack(6,353),
+        runtime::Pack(6,629),runtime::Pack(6,640),runtime::Pack(6,659),runtime::Pack(6,1130),runtime::Pack(6,1170),
+        runtime::Pack(6,1179),runtime::Pack(7,99),runtime::Pack(7,104),runtime::Pack(6,659)|1u,runtime::Pack(6,1179)|1u};
+    unsigned at=0;
+    for(auto version:versions) {
+        if constexpr(runtime::CompiledMinor==0)if(((version>>16)&255)==5)continue;
+        if(runtime::Select(version))result.compatibleVersions[at++]=version;
+    }
+    return result;
+}
 static_assert(sizeof(Metadata)==848);
 static_assert(offsetof(Metadata,versionIndependenceEx)==772);
 static_assert(offsetof(Metadata,compatibleVersions)==780);

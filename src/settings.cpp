@@ -1,5 +1,7 @@
+#include <charconv>
 #include <string_view>
 #include "settings.h"
+#include "weather_profiles.h"
 #include "lut.h"
 #include "finishing_settings.h"
 #include <windows.h>
@@ -29,9 +31,17 @@ Settings Settings::Load(const std::filesystem::path& path) {
             if(value=="true" || value=="1")result.enabled=true;
             else if(value=="false" || value=="0")result.enabled=false;
         }
+        if(section=="Input" && key=="ToggleScanCode") {
+            unsigned scan{};const auto parsed=std::from_chars(value.data(),value.data()+value.size(),scan);
+            if(parsed.ec==std::errc{} && parsed.ptr==value.data()+value.size() && scan<=255)result.toggleScanCode=scan;
+        }
         if(section=="General" && key=="ShowFPS") {
             if(value=="true" || value=="1")result.showFps=true;
             else if(value=="false" || value=="0")result.showFps=false;
+        }
+        if(section=="Weather" && key=="Enabled") {
+            if(value=="true" || value=="1")result.weather.enabled=true;
+            else if(value=="false" || value=="0")result.weather.enabled=false;
         }
         if(section=="Profiles" && key=="Separate") {
             if(value=="true" || value=="1")result.separateProfiles=true;
@@ -87,6 +97,11 @@ Settings Settings::Load(const std::filesystem::path& path) {
         }
         float number{};auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
         if(parsed.ec!=std::errc{} || parsed.ptr!=value.data()+value.size() || !std::isfinite(number))continue;
+        if(section=="Weather" && key=="TransitionSeconds")result.weather.transitionSeconds=std::clamp(number,0.0f,10.0f);
+        for(unsigned i=0;i<4;++i)if(section==std::string("Weather.")+WeatherNames[i])
+            WeatherParameters(result.weather.profiles[i],[&](const char* field,auto,float& target,float low,float high,auto) {
+                if(key==field)target=std::clamp(number,low,high);
+            });
         FinishingParameters(result,[&](const char* effect,const char* field,auto,float& target,float low,float high,auto) {
             if(section==effect && key==field)target=std::clamp(number,low,high);
         });
@@ -192,7 +207,12 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
             std::isfinite(p.bloom.threshold)&&std::isfinite(p.bloom.radius)&&std::isfinite(p.fog.density)&&std::isfinite(p.fog.startDistance)&&std::isfinite(p.dof.focusDistance)&&std::isfinite(p.dof.strength)&&std::isfinite(p.dof.focusSpeed)&&std::isfinite(p.dof.focusRadius)&&std::isfinite(p.clarity.strength)&&std::isfinite(p.vibrance.strength)&&FiniteFinishing(p);};
         if(!finite(*this)||!finite(interior)||!finite(exterior)||!finite(exteriorNight)||!std::isfinite(dayHour)||!std::isfinite(nightHour)||!std::isfinite(transitionSeconds))return false;
         if(!std::isfinite(motion.strength)||!std::isfinite(motion.radius)||!MotionSettings::ValidSamples(motion.samples))return false;
+        if(!std::isfinite(weather.transitionSeconds))return false;
+        bool weatherFinite=true;
+        for(const auto& p:weather.profiles)WeatherParameters(p,[&](auto,auto,float value,auto,auto,auto){weatherFinite&=std::isfinite(value);});
+        if(!weatherFinite)return false;
         std::ostringstream text;text.imbue(std::locale::classic());text<<std::setprecision(9);
+        text<<"[Input]\nToggleScanCode="<<std::min(toggleScanCode,255u)<<"\n\n";
         text<<"[General]\nShowFPS="<<(showFps?"true":"false")<<"\n\n";
         text<<"[CGE]\nEnabled="<<(enabled?"true":"false")<<"\n\n[Color]\nExposureStops="<<std::clamp(exposure,-3.0f,3.0f)
             <<"\nContrast="<<std::clamp(contrast,0.0f,2.0f)<<"\nSaturation="<<std::clamp(saturation,0.0f,2.0f)
@@ -259,6 +279,14 @@ bool Settings::Save(const std::filesystem::path& path) const noexcept {
         text<<"\n[MotionBlur]\nEnabled="<<(motion.enabled?"true":"false")
             <<"\nStrength="<<std::clamp(motion.strength,0.0f,10.0f)
             <<"\nMaxRadius="<<std::clamp(motion.radius,1.0f,64.0f)<<"\nSamples="<<motion.samples<<"\n";
+        text<<"\n[Weather]\nEnabled="<<(weather.enabled?"true":"false")
+            <<"\nTransitionSeconds="<<std::clamp(weather.transitionSeconds,0.0f,10.0f)<<"\n";
+        for(unsigned i=0;i<4;++i) {
+            text<<"\n[Weather."<<WeatherNames[i]<<"]\n";
+            WeatherParameters(weather.profiles[i],[&](const char* field,auto,float value,float low,float high,auto) {
+                text<<field<<"="<<std::clamp(value,low,high)<<"\n";
+            });
+        }
         auto temporary=path.wstring()+L".tmp";
         {std::ofstream file(temporary,std::ios::binary|std::ios::trunc);file<<text.str();file.flush();if(!file)return false;}
         const bool moved=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;

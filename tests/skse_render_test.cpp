@@ -1,6 +1,7 @@
 #include "skse_api.h"
 #include "settings.h"
 #include "presets.h"
+#include "weather_profiles.h"
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
@@ -23,9 +24,40 @@ __declspec(allocate(".cgeui")) const unsigned char interfaceFixture[64]={
     0x4c,0x8b,0xdc,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x57,0x48,0x83,0xec,0x50,
     0x48,0x83,0xc4,0x50,0x41,0x5f,0x41,0x5d,0x41,0x5c,0x5f,0x5e,0xc3
 };
-bool shortPrologue{};
+bool interfaceRip{},interfaceLea{},interfaceRip32{},interfaceStore32{},interfaceEndbr{};
+std::uint64_t interfaceDelegations{};
+bool shortPrologue{},ripEntry{},cameraVariant{},hdrReordered{},hdrWide{},hdrMismatch{};
+std::uintptr_t expectedHdrEffect{0x22};
 cge::runtime::Layout fixtureLayout=*cge::runtime::Select(cge::skse::Runtime);
 void PrepareInterfaceFixture() {
+    if(interfaceRip || interfaceLea || interfaceRip32 || interfaceStore32 || interfaceEndbr) {
+        auto* code=const_cast<unsigned char*>(interfaceFixture);DWORD old{},ignored{};
+        Check(VirtualProtect(code,64,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Relative interface writable");
+        const unsigned char bytes[]={0x48,0x8b,0x05,0,0,0,0,0x48,0x83,0xc0,0x01,0x48,0x89,0x05,0,0,0,0,0xc3};
+        const unsigned start=interfaceEndbr?4u:0u;
+        if(interfaceEndbr){const unsigned char marker[]={0xf3,0x0f,0x1e,0xfa};memcpy(code,marker,sizeof(marker));}
+        code+=start;
+        memcpy(code,bytes,sizeof(bytes));
+        const auto offset=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+7));
+        memcpy(code+3,&offset,4);
+        const auto store=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+18));
+        memcpy(code+14,&store,4);
+        if(interfaceLea){code[1]=0x8d;const unsigned char tail[]={0x48,0xff,0x00,0xc3};memcpy(code+7,tail,sizeof(tail));}
+        if(interfaceRip32) {
+            const unsigned char narrow[]={0x8b,0x05,0,0,0,0,0x83,0xc0,0x01,0x89,0x05,0,0,0,0,0xc3};memcpy(code,narrow,sizeof(narrow));
+            const auto load=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+6));
+            const auto store32=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+15));
+            memcpy(code+2,&load,4);memcpy(code+11,&store32,4);
+        }
+        if(interfaceStore32) {
+            const unsigned char narrow[]={0x89,0x0d,0,0,0,0,0x48,0xff,0x05,0,0,0,0,0xc3};memcpy(code,narrow,sizeof(narrow));
+            const auto store32=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+6));
+            const auto increment=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&interfaceDelegations)-reinterpret_cast<std::intptr_t>(code+13));
+            memcpy(code+2,&store32,4);memcpy(code+9,&increment,4);interfaceDelegations=23;
+        }
+        code-=start;
+        VirtualProtect(code,64,old,&ignored);FlushInstructionCache(GetCurrentProcess(),code,64);return;
+    }
     if(shortPrologue) {
         auto* code=const_cast<unsigned char*>(interfaceFixture);DWORD old{},ignored{};
         const unsigned char bytes[]={0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x05,0,0,0,0,0x48,0x83,0xc4,0x20,0x5b,0xc3};
@@ -40,7 +72,50 @@ void PrepareInterfaceFixture() {
     memcpy(code,bytes,sizeof(bytes));VirtualProtect(code,sizeof(interfaceFixture),old,&ignored);
     FlushInstructionCache(GetCurrentProcess(),code,sizeof(interfaceFixture));
 }
-void InterfaceBoundary(){reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);}
+bool motionUiTaa{};
+unsigned char ExchangeInterfaceTaa(unsigned char value);
+void InterfaceBoundary(){
+    const auto previous=motionUiTaa?ExchangeInterfaceTaa(0):0;
+    reinterpret_cast<void(*)(std::int64_t)>(const_cast<unsigned char*>(interfaceFixture))(0);
+    if(motionUiTaa)ExchangeInterfaceTaa(previous);
+}
+#pragma section(".cgeinput",read,execute)
+__declspec(allocate(".cgeinput")) const unsigned char inputPollFixture[0x100]{};
+__declspec(allocate(".cgeinput")) const unsigned char inputTargetFixture[64]{};
+bool inputConflict{};
+unsigned inputDelegations{};
+const void* expectedEvents{};
+struct ButtonFixture {
+    void* vtable{};
+    std::uint32_t device{},type{};
+    ButtonFixture* next{};
+    const void* userEvent{};
+    std::uint32_t key{},padding{};
+    float value{},held{};
+};
+static_assert(sizeof(ButtonFixture)==0x30);
+void NativeInput(void* source,const void* events) {
+    Check(source==reinterpret_cast<void*>(0x1234) && events==expectedEvents,"Keyboard observer preserves dispatcher and event list");++inputDelegations;
+}
+void PrepareInputFixture() {
+    auto* code=const_cast<unsigned char*>(inputPollFixture);auto* target=const_cast<unsigned char*>(inputTargetFixture);
+    DWORD old{},oldTarget{},ignored{};
+    Check(VirtualProtect(code,0x100,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Input fixture writable");
+    Check(VirtualProtect(target,64,PAGE_EXECUTE_READWRITE,&oldTarget)!=FALSE,"Input target writable");
+    memset(code,0x90,0x100);
+    const unsigned char enter[]={0x53,0x48,0x83,0xec,0x20};memcpy(code,enter,sizeof(enter));
+    code[0x7b]=inputConflict?0xe9:0xe8;
+    const auto offset=static_cast<std::int32_t>(target-(code+0x80));memcpy(code+0x7c,&offset,4);
+    const unsigned char leave[]={0x48,0x83,0xc4,0x20,0x5b,0xc3};memcpy(code+0x80,leave,sizeof(leave));
+    const unsigned char prefix[]={0x48,0x83,0xec,0x28,0x48,0x83,0xc4,0x28,0xff,0x25,0,0,0,0};
+    memcpy(target,prefix,sizeof(prefix));auto* native=reinterpret_cast<void*>(NativeInput);memcpy(target+14,&native,sizeof(native));
+    VirtualProtect(code,0x100,old,&ignored);VirtualProtect(target,64,oldTarget,&ignored);
+    FlushInstructionCache(GetCurrentProcess(),code,0x100);FlushInstructionCache(GetCurrentProcess(),target,64);
+}
+void InputBoundary(ButtonFixture* event) {
+    expectedEvents=&event;
+    reinterpret_cast<void(*)(void*,const void*)>(const_cast<unsigned char*>(inputPollFixture))(reinterpret_cast<void*>(0x1234),&event);
+}
 #pragma section(".cgeao",read,execute)
 __declspec(allocate(".cgeao")) const unsigned char worldFrameFixture[0x890]{};
 __declspec(allocate(".cgeao")) const unsigned char worldOpaqueFixture[0x340]{};
@@ -72,6 +147,11 @@ void PrepareOpaqueFixture() {
     auto tail=[&](const unsigned char* target,void* function) {
         write(target,64,[&](unsigned char* memory){
             const unsigned char prefix[]={0x48,0x83,0xec,0x28,0x48,0x83,0xc4,0x28};memcpy(memory,prefix,sizeof(prefix));
+            if(ripEntry) {
+                const unsigned char load[]={0x48,0x8b,0x05,0,0,0,0,0x90};memcpy(memory,load,sizeof(load));
+                const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&worldDelegations)-reinterpret_cast<std::intptr_t>(memory+7));
+                memcpy(memory+3,&displacement,4);
+            }
             memory[8]=0xff;memory[9]=0x25;memset(memory+10,0,4);memcpy(memory+14,&function,8);
         });
     };
@@ -81,7 +161,7 @@ void PrepareOpaqueFixture() {
         at[0]=0xe8;const auto delta=static_cast<std::int32_t>(target-at-5);memcpy(at+1,&delta,4);
     };
     const bool se=fixtureLayout.family==cge::runtime::Family::SE;
-    const unsigned frame=se?0x831:fixtureLayout.version>=cge::runtime::Pack(6,1130)?0x85e:0x841;
+    const unsigned frame=se?0x831:fixtureLayout.version>=cge::runtime::Pack(7,99)?0x85e:0x841;
     const unsigned start=se?0x8e:0x84,end=se?0x319:0x308;
     const unsigned char enter[]={0x48,0x83,0xec,0x28},leave[]={0x48,0x83,0xc4,0x28,0xc3};
     write(worldFrameFixture,sizeof(worldFrameFixture),[&](unsigned char* memory) {
@@ -107,8 +187,8 @@ __declspec(allocate(".cgehdr")) const unsigned char imageSpaceDrawFixture[64]{};
 __declspec(allocate(".cgehdr")) const unsigned char secondTonemapFixture[64]{};
 unsigned hdrDelegations{};
 void* expectedHdrParameter=reinterpret_cast<void*>(0x1234);
-void NativeTonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
-    Check(manager==reinterpret_cast<void*>(0x5678) && effect==0x22 && source==1 && target==0x29 &&
+void NativeTonemap(void* manager,std::uintptr_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
+    Check(manager==reinterpret_cast<void*>(0x5678) && effect==expectedHdrEffect && source==1 && target==0x29 &&
         parameters==expectedHdrParameter,"HDR delegate preserves all five native arguments");
     ++hdrDelegations;
 }
@@ -126,6 +206,10 @@ void PrepareTonemapFixture() {
     for(unsigned i=0;i<fixtureLayout.callCount;++i) {
         const auto at=fixtureLayout.tonemapCalls[i];
         memcpy(main+at-8,arguments,sizeof(arguments));main[at]=0xe8;
+        if(hdrReordered) {
+            const unsigned char reordered[]={0x48,0x8b,0xcb,0xba,0x22,0,0,0};memcpy(main+at-8,reordered,sizeof(reordered));
+        }
+        if(hdrWide)memset(main+at-8,0x90,5);
         const auto offset=static_cast<std::int32_t>(draw-(main+at+5));memcpy(main+at+1,&offset,4);
         const unsigned char leave[]={0x48,0x83,0xc4,0x30,0x5b,0xc3};memcpy(main+at+5,leave,sizeof(leave));
     }
@@ -136,6 +220,11 @@ void PrepareTonemapFixture() {
         const unsigned char shortCode[]={0x53,0x48,0x83,0xec,0x30,0x48,0x8b,0x05,0,0,0,0,0x48,0x83,0xc4,0x30,0x5b};
         memcpy(draw,shortCode,sizeof(shortCode));
         for(unsigned i=17;i<25;++i)draw[i]=0x90;
+    }
+    if(ripEntry) {
+        memset(draw,0x90,25);const unsigned char load[]={0x48,0x8b,0x05,0,0,0,0};memcpy(draw,load,sizeof(load));
+        const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&hdrDelegations)-reinterpret_cast<std::intptr_t>(draw+7));
+        memcpy(draw+3,&displacement,4);
     }
     draw[25]=0xff;draw[26]=0x25;memset(draw+27,0,4);
     auto* target=reinterpret_cast<void*>(NativeTonemap);memcpy(draw+31,&target,8);
@@ -153,10 +242,10 @@ void PrepareTonemapFixture() {
     FlushInstructionCache(GetCurrentProcess(),draw,sizeof(imageSpaceDrawFixture));
 }
 void TonemapBoundary() {
-    using Draw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,void*);
+    using Draw=void(*)(void*,std::uintptr_t,std::uint32_t,std::uint32_t,void*);
     static bool alternate=false;alternate=!alternate;
     auto* code=fixtureLayout.callCount==2 && alternate?secondTonemapFixture:tonemapFixture;
-    reinterpret_cast<Draw>(const_cast<unsigned char*>(code))(reinterpret_cast<void*>(0x5678),0x22,1,0x29,expectedHdrParameter);
+    reinterpret_cast<Draw>(const_cast<unsigned char*>(code))(reinterpret_cast<void*>(0x5678),expectedHdrEffect,1,0x29,expectedHdrParameter);
 }
 alignas(8) unsigned char playerFixture[0x80]{};
 alignas(8) unsigned char cellFixture[0x50]{};
@@ -168,6 +257,7 @@ alignas(8) unsigned char rendererFixture[0x2200]{};
 alignas(8) unsigned char uiFixture[0x168]{};
 alignas(8) unsigned char imageSpaceFixture[0x1f8]{};
 alignas(8) unsigned char temporalFixture[0x20]{};
+unsigned char ExchangeInterfaceTaa(unsigned char value){const auto old=temporalFixture[0x18];temporalFixture[0x18]=value;return old;}
 void* uiSingletonFixture=uiFixture;
 void* imageSpaceSingletonFixture=imageSpaceFixture;
 
@@ -180,11 +270,14 @@ void* worldRootSingletonFixture=worldRootFixture;
 void PrepareCameraFixture() {
     const void* camera=cameraFixture;memcpy(worldRootFixture+0x128,&camera,sizeof(camera));
     const float planes[]={-1,1,0.75f,-0.75f,1,10000};memcpy(cameraFixture+0x150,planes,sizeof(planes));
+    const float projection[]={1,0,0,0,0,1.3333333f,0,0,0,0,1.0001f,-1.0001f,0,0,1,0};
+    memcpy(cameraFixture+0x110,projection,sizeof(projection));
     auto* code=const_cast<unsigned char*>(cameraGetterFixture);DWORD old{},ignored{};
     Check(VirtualProtect(code,15,PAGE_EXECUTE_READWRITE,&old)!=FALSE,"Camera fixture writable");
     const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(&worldRootSingletonFixture)-
         reinterpret_cast<std::intptr_t>(code+7));memcpy(code+3,&displacement,4);
-    VirtualProtect(code,15,old,&ignored);
+    if(cameraVariant || fixtureLayout.family==cge::runtime::Family::SE) {code[2]=0x0d;code[9]=0x81;}
+    VirtualProtect(code,15,old,&ignored);FlushInstructionCache(GetCurrentProcess(),code,15);
 }
 void SetGameHour(float hour) {
     memcpy(gameHourFixture+0x34,&hour,sizeof(hour));
@@ -195,9 +288,19 @@ void SetCell(bool interior) {
     memcpy(cellFixture+0x40,&flags,sizeof(flags));
     const void* cell=cellFixture;memcpy(playerFixture+0x60,&cell,sizeof(cell));
 }
+unsigned char skyFixture[0x2c8]{},weatherFixture[0x680]{};
+__declspec(noinline) void* SkyGetterFixture(){return skyFixture;}
+void SetWeather(unsigned flags,float progress=1) {
+    weatherFixture[0x1a]=0x36;weatherFixture[0x66f]=static_cast<unsigned char>(flags);
+    const auto* weather=weatherFixture;memcpy(skyFixture+0x48,&weather,sizeof(weather));
+    memcpy(skyFixture+0x1b8,&progress,sizeof(progress));
+}
 void WriteLibrary(const fs::path& path) {
+    SetWeather(1);
     const auto base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     const std::pair<cge::runtime::Address,const void*> values[]={
+        {cge::runtime::Address::SkyGetter,reinterpret_cast<const void*>(SkyGetterFixture)},
+        {cge::runtime::Address::InputDispatch,inputPollFixture},
         {cge::runtime::Address::WorldOpaque,worldOpaqueFixture},{cge::runtime::Address::WorldFrame,worldFrameFixture},
         {cge::runtime::Address::Interface,interfaceFixture},{cge::runtime::Address::Calendar,&calendarSingletonFixture},
         {cge::runtime::Address::Player,&playerSingletonFixture},{cge::runtime::Address::CameraGetter,cameraGetterFixture},
@@ -243,12 +346,29 @@ std::uint32_t Handle(){++handleCalls;return 7;}
 int wmain(int argc,wchar_t** argv) {
     Check(argc==5,"DLL, fixture, mode and test framework");
     const std::wstring mode=argv[3];
-    if(mode.starts_with(L"--runtime-")) {
+    inputConflict=mode==L"--input-hook-conflict";
+    const bool gogRuntime=mode.starts_with(L"--runtime-gog-");
+    if(gogRuntime) {
+        unsigned minor{},revision{};
+        Check(swscanf_s(mode.c_str(),L"--runtime-gog-%u-%u",&minor,&revision)==2,"Parse GOG runtime case");
+        const auto selected=cge::runtime::Select(cge::runtime::Pack(minor,revision)|1u);
+        Check(selected.has_value(),"Supported marked GOG runtime");fixtureLayout=*selected;
+    }else if(mode.starts_with(L"--runtime-")) {
         unsigned minor{},revision{};
         Check(swscanf_s(mode.c_str(),L"--runtime-%u-%u",&minor,&revision)==2,"Parse runtime case");
         const auto selected=cge::runtime::Select(cge::runtime::Pack(minor,revision));
         Check(selected.has_value(),"Supported fixture runtime");fixtureLayout=*selected;
     }
+    interfaceRip=mode==L"--interface-rip";interfaceLea=mode==L"--interface-lea";
+    interfaceRip32=mode==L"--interface-rip32";interfaceStore32=mode==L"--interface-store32";interfaceEndbr=mode==L"--interface-endbr";
+    if(interfaceRip || interfaceLea || interfaceRip32 || interfaceStore32 || interfaceEndbr)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(6,1170));
+    motionUiTaa=mode==L"--motion-ui-taa";
+    if(motionUiTaa)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(6,1170));
+    hdrReordered=mode==L"--hdr-reordered";hdrWide=mode==L"--hdr-wide-argument";hdrMismatch=mode==L"--hdr-native-mismatch";
+    if(hdrWide)expectedHdrEffect=0x1234567800000022ull;
+    if(hdrReordered || hdrWide || hdrMismatch)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(6,1170));
+    ripEntry=mode==L"--rip-entry";cameraVariant=mode==L"--camera-variant";
+    if(ripEntry || cameraVariant)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(6,1170));
     shortPrologue=mode==L"--short-prologue";
     if(shortPrologue)fixtureLayout=*cge::runtime::Select(cge::runtime::Pack(6,1170));
     legacyApi=mode==L"--legacy-api";
@@ -256,7 +376,7 @@ int wmain(int argc,wchar_t** argv) {
     const bool missing=mode==L"--missing-framework",old=mode==L"--old-framework",
         incomplete=mode==L"--incomplete-framework",sceneMissing=mode==L"--missing-library",
         invalidLibrary=mode==L"--invalid-library",sceneConflict=mode==L"--hook-conflict",
-        hdrConflict=mode==L"--hdr-hook-conflict",opaqueConflict=mode==L"--opaque-hook-conflict";
+        hdrConflict=mode==L"--hdr-hook-conflict" || hdrMismatch,opaqueConflict=mode==L"--opaque-hook-conflict";
     const bool frameworkReady=!missing && !old && !incomplete;
     const bool sceneReady=!sceneMissing && !invalidLibrary && !sceneConflict;
     const auto root=fs::absolute(argv[2])/L"SKSE"/L"Plugins"/L"CGE-\u03b3";
@@ -267,7 +387,7 @@ int wmain(int argc,wchar_t** argv) {
     fs::copy_file(fs::path(argv[1]).parent_path()/"Warm.cube",root/"CGE"/"LUTs"/"Warm.cube",fs::copy_options::overwrite_existing);
     {std::ofstream f(root/"CGE"/"LUTs"/"Test.cube");f<<"LUT_3D_SIZE 2\n0 0 0\n0.5 0 0\n0 1 0\n0.5 1 0\n0 0 1\n0.5 0 1\n0 1 1\n0.5 1 1\n";}
     Write(config,"[Color]\nExposureStops=-1\n[Input]\nToggleKey=119\n");
-    PrepareInterfaceFixture();PrepareTonemapFixture();PrepareOpaqueFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
+    PrepareInputFixture();PrepareInterfaceFixture();PrepareTonemapFixture();PrepareOpaqueFixture();PrepareCameraFixture();const std::uint32_t formId=0x14;memcpy(playerFixture+0x14,&formId,4);
     SetCell(false);SetGameHour(12);
     const void* temporal=temporalFixture;memcpy(imageSpaceFixture+0x1f0,&temporal,sizeof(temporal));temporalFixture[0x18]=1;
     const auto library=root/fixtureLayout.LibraryName();WriteLibrary(library);
@@ -279,16 +399,24 @@ int wmain(int argc,wchar_t** argv) {
         *p=0x90;VirtualProtect(p,1,oldProtection,&ignored);
     };
     if(sceneConflict)corrupt(interfaceFixture);
-    if(hdrConflict)corrupt(tonemapFixture+fixtureLayout.tonemapCalls[0]);
+    if(hdrConflict && !hdrMismatch)corrupt(tonemapFixture+fixtureLayout.tonemapCalls[0]);
+    if(hdrMismatch) {
+        auto* call=const_cast<unsigned char*>(tonemapFixture)+fixtureLayout.tonemapCalls[0];DWORD oldProtection{},ignored{};
+        Check(VirtualProtect(call,5,PAGE_EXECUTE_READWRITE,&oldProtection)!=FALSE,"Native HDR mismatch fixture writable");
+        const auto displacement=static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(opaqueTargetFixture)-reinterpret_cast<std::intptr_t>(call+5));
+        memcpy(call+1,&displacement,4);VirtualProtect(call,5,oldProtection,&ignored);FlushInstructionCache(GetCurrentProcess(),call,5);
+    }
     if(opaqueConflict)corrupt(worldOpaqueFixture+(fixtureLayout.family==cge::runtime::Family::SE?0x8e:0x84));
-    const auto frameOffset=fixtureLayout.family==cge::runtime::Family::SE?0x831:fixtureLayout.version>=cge::runtime::Pack(6,1130)?0x85e:0x841;
+    const auto frameOffset=fixtureLayout.family==cge::runtime::Family::SE?0x831:fixtureLayout.version>=cge::runtime::Pack(7,99)?0x85e:0x841;
     unsigned char savedWorldCall[5];memcpy(savedWorldCall,worldFrameFixture+frameOffset,5);
     auto module=LoadLibraryExW((root/"CGE.dll").c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_SYSTEM32);
     Check(module!=nullptr,"Load production CGE.dll");
     Check(fs::exists(root/"CGE-loader.log"),"Bootstrap log exists before SKSE Load is called");
     auto load=Proc<bool(*)(const cge::skse::Interface*)>(module,"SKSEPlugin_Load");
     cge::skse::Interface api{0x02030010,fixtureLayout.version,0,0,Query,Handle};
+    if(gogRuntime)api.skseVersion=((fixtureLayout.version>>4)&4095)==659?0x02020030:0x02020060;
     if(shortPrologue)api.skseVersion=0x02020080;
+    if(motionUiTaa || interfaceRip || interfaceLea || interfaceRip32 || interfaceStore32 || interfaceEndbr)api.skseVersion=0x02020060;
     const cge::skse::Interface* apiView=&api;
     if(legacyApi) {
         api.skseVersion=0x02000020;
@@ -332,7 +460,7 @@ int wmain(int argc,wchar_t** argv) {
     cge::skse::Message message{"SKSE",0,0,nullptr};listener(&message);
     if(pageCount)Check(pageCount()==0,"Wait for PostPostLoad");
     message.type=1;listener(&message);listener(&message);
-    if(pageCount)Check(pageCount()==(frameworkReady?21u:0u),"Validate API before registering exactly twenty-one pages");
+    if(pageCount)Check(pageCount()==(frameworkReady?22u:0u),"Validate API before registering exactly twenty-two pages");
     if(frameworkReady) {
         const auto index=Proc<int(*)(const char*)>(framework,"TestPageIndex");
         Check(index("Community Graphics Engine/Color/Lift Gamma Gain")==index("Community Graphics Engine/Color/Color")+1,"RGB grading follows Color");
@@ -440,6 +568,42 @@ int wmain(int argc,wchar_t** argv) {
         action(type,name,number);Check(render(page),"Registered page callback");
     };
     present();pixel(sceneReady?102:204);
+    if(sceneReady && !inputConflict) {
+        ButtonFixture key;key.key=66;key.value=1;
+        const auto count=inputDelegations;
+        InputBoundary(&key);present();pixel(204);
+        Check(!cge::Settings::Load(config).enabled,"F8 disables and saves the master switch");
+        InputBoundary(&key);Check(!cge::Settings::Load(config).enabled,"Repeated key-down does not toggle twice");
+        key.held=1;InputBoundary(&key);Check(!cge::Settings::Load(config).enabled,"Held key does not toggle");
+        key.value=0;InputBoundary(&key);key.value=1;key.held=0;InputBoundary(&key);present();pixel(102);
+        Check(cge::Settings::Load(config).enabled && cge::Settings::Load(config).exposure==-1,"Second press restores effects without changing controls");
+        key.value=0;key.held=1;InputBoundary(&key);
+        key.device=1;key.value=1;key.held=0;InputBoundary(&key);
+        Check(cge::Settings::Load(config).enabled,"Mouse buttons do not activate keyboard hotkey");
+        key.device=0;key.type=2;InputBoundary(&key);Check(cge::Settings::Load(config).enabled,"Text events do not activate keyboard hotkey");
+        key.type=0;key.key=65;InputBoundary(&key);Check(cge::Settings::Load(config).enabled,"Other keys do not toggle effects");
+        key.value=0;key.held=1;InputBoundary(&key);key.key=66;key.value=1;key.held=0;
+        std::uint32_t paused=1;memcpy(uiFixture+0x160,&paused,4);InputBoundary(&key);
+        Check(cge::Settings::Load(config).enabled,"Paused game suppresses hotkey");
+        paused=0;memcpy(uiFixture+0x160,&paused,4);key.value=0;key.held=1;InputBoundary(&key);
+        if(frameworkReady) {
+            blocking(true);key.value=1;key.held=0;InputBoundary(&key);
+            Check(cge::Settings::Load(config).enabled,"Framework numeric input suppresses hotkey");
+            blocking(false);key.value=0;key.held=1;InputBoundary(&key);
+            const char* page="Community Graphics Engine/General";
+            edit(page,4,"##ToggleKey",8);edit(page,5,"Save",0);
+            Check(cge::Settings::Load(config).toggleScanCode==67,"Menu saves remapped F9 hotkey");
+            key.value=1;key.held=0;InputBoundary(&key);Check(cge::Settings::Load(config).enabled,"Old hotkey stops after remapping");
+            key.value=0;key.held=1;InputBoundary(&key);key.key=67;key.value=1;key.held=0;InputBoundary(&key);
+            Check(!cge::Settings::Load(config).enabled,"Remapped F9 toggles effects");
+            key.value=0;key.held=1;InputBoundary(&key);key.value=1;key.held=0;InputBoundary(&key);
+            key.value=0;key.held=1;InputBoundary(&key);
+            edit(page,4,"##ToggleKey",0);edit(page,5,"Save",0);key.value=1;key.held=0;InputBoundary(&key);
+            Check(cge::Settings::Load(config).enabled && cge::Settings::Load(config).toggleScanCode==0,"Disabled hotkey does not toggle");
+            key.value=0;key.held=1;InputBoundary(&key);edit(page,4,"##ToggleKey",7);edit(page,5,"Save",0);
+        }
+        InputBoundary(nullptr);Check(inputDelegations>count,"Every observed event and empty list reaches native dispatch");
+    }
     if(frameworkReady) {
         edit(shared,3,"Exposure",0);present();pixel(204);
         edit(bloom,1,"Bloom enabled",1);edit(bloom,2,"Threshold",0.5f);present();
@@ -467,6 +631,14 @@ int wmain(int argc,wchar_t** argv) {
             for(unsigned y=0;y<64;++y)for(unsigned x=0;x<32;++x)aoDepth[y*64+x]=encodeDepth(275);
             context->UpdateSubresource(depth.Get(),0,nullptr,aoDepth.data(),64*4,0);
             temporalFixture[0x18]=0;present();pixel(204);
+            if(!opaqueConflict) {
+                auto temporalMessages=[&] {
+                    std::ifstream file(root/"CGE.log");std::string contents((std::istreambuf_iterator<char>(file)),{});
+                    std::size_t at=0;unsigned count=0;while((at=contents.find("CGE SSAO temporal:",at))!=std::string::npos){++count;++at;}return count;
+                };
+                const auto messages=temporalMessages();for(unsigned frame=0;frame<16;++frame)present();
+                Check(temporalMessages()==messages,"Stable SSAO does not write a diagnostic on every frame");
+            }
             Check(hdrPixel(35)==0.05f && hdrPixel(15)==0.05f,"HDR SSAO multiplication is removed; occlusion belongs to opaque material lighting");
             const float invalidSide=0;memcpy(cameraFixture+0x150,&invalidSide,4);memcpy(cameraFixture+0x154,&invalidSide,4);
             present();Check(hdrPixel(35)==0.05f,"Invalid native frustum bypasses SSAO");
@@ -474,6 +646,9 @@ int wmain(int argc,wchar_t** argv) {
             present();Check(hdrPixel(35)==0.05f,"SSAO never falls back to post-lighting dimming");
             data.assign(64*64,0.5f);context->UpdateSubresource(depth.Get(),0,nullptr,data.data(),64*4,0);
             temporalFixture[0x18]=1;
+            for(unsigned type:{2u,3u,7u}) {
+                cge::skse::Message resetMessage{"SKSE",type,0,nullptr};listener(&resetMessage);present();
+            }
         }
         edit(shared,5,"Reset Color",0);edit(ssao,5,"Save",0);
         Check(cge::Settings::Load(config).ssao.enabled,"Reset Color preserves SSAO");
@@ -633,6 +808,25 @@ int wmain(int argc,wchar_t** argv) {
         Check(cge::Settings::Load(config).motion.samples==16,"Motion quality and enable persist");
         if(sceneReady) {
             present();present();present();
+            if(motionUiTaa) {
+                std::ifstream file(root/"CGE.log");std::string contents((std::istreambuf_iterator<char>(file)),{});
+                Check(contents.find("CGE motion probe: Native buffers acquired, TAA=1, source=world")!=std::string::npos,"World TAA survives temporary interface disable on 1.6.1170");
+                Check(contents.find("CGE motion blur: Ready")!=std::string::npos,"Motion blur runs after world TAA observation");
+                clarityPattern=true;present();
+                context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE moving{};
+                Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&moving)),"Moving native scene readback");
+                const auto blurred=static_cast<const unsigned char*>(moving.pData)[32*moving.RowPitch+31*4];
+                context->Unmap(readback.Get(),0);
+                Check(blurred<145,"Motion blur changes native scene pixels despite temporary interface TAA disable");
+                temporalFixture[0x18]=0;present();
+                context->CopyResource(readback.Get(),buffer.Get());D3D11_MAPPED_SUBRESOURCE sharp{};
+                Check(SUCCEEDED(context->Map(readback.Get(),0,D3D11_MAP_READ,0,&sharp)),"Disabled TAA scene readback");
+                Check(static_cast<const unsigned char*>(sharp.pData)[32*sharp.RowPitch+31*4]==145,"Disabled world TAA preserves sharp scene pixels");
+                context->Unmap(readback.Get(),0);clarityPattern=false;
+                std::ifstream disabled(root/"CGE.log");std::string disabledLog((std::istreambuf_iterator<char>(disabled)),{});
+                Check(disabledLog.find("CGE motion probe: Native TAA disabled, TAA=0, source=world")!=std::string::npos,"Genuinely disabled world TAA still blocks motion blur");
+                temporalFixture[0x18]=1;present();present();present();
+            }
             blocking(true);present();
             std::ifstream log(root/"CGE.log");std::string logged((std::istreambuf_iterator<char>(log)),{});
             Check(logged.find("CGE motion blur: Paused")!=std::string::npos,"Framework input capture pauses motion");
@@ -828,6 +1022,31 @@ int wmain(int argc,wchar_t** argv) {
         edit(shared,3,"Exposure",1);edit(shared,5,"Save",0);
         Check(cge::Settings::Load(config).exposure==0,"Disabled color controls preserve values");
         edit(general,1,"Effects enabled",1);edit(general,5,"Reset All",0);edit(general,5,"Save",0);
+        present();
+        Check(render("Community Graphics Engine/Effects/Motion Blur") &&
+            Proc<bool(*)(const char*)>(framework,"TestHasText")("Requires native TAA enabled."),"Motion blur page explains native TAA requirement");
+        const char* weatherPage="Community Graphics Engine/Weather Profiles";
+        auto disabledControl=Proc<int(*)(int,const char*)>(framework,"TestControlDisabled");
+        edit(weatherPage,3,"Exposure Offset",2);
+        Check(disabledControl(3,"Exposure Offset")==1,"Weather controls disabled until weather profiles are enabled");
+        edit(weatherPage,1,"Weather profiles enabled",1);
+        edit(weatherPage,3,"Weather Transition (sec)",0);
+        edit(weatherPage,3,"Exposure Offset",1);
+        edit(weatherPage,5,"Save",0);
+        auto weatherSaved=cge::Settings::Load(config);
+        Check(weatherSaved.weather.enabled && weatherSaved.weather.profiles[0].exposure==1,"Framework saves weather adjustments");
+        SetCell(false);present();
+        if(sceneReady) {
+        Check(render(weatherPage) && Proc<bool(*)(const char*)>(framework,"TestHasText")("Clear"),"Native Sky getter reports clear weather through Address Library");
+        if(sceneReady)pixel(255);
+        SetWeather(4);Sleep(110);present();
+        Check(render(weatherPage) && Proc<bool(*)(const char*)>(framework,"TestHasText")("Rain"),"Native weather flags drive the active weather category");
+        SetWeather(1);SetCell(true);present();
+        Check(render(weatherPage) && Proc<bool(*)(const char*)>(framework,"TestHasText")("Inactive indoors."),"Interior ignores exterior weather");
+        }else Check(render(weatherPage) && Proc<bool(*)(const char*)>(framework,"TestHasText")("Weather data unavailable."),"Missing native weather safely retains base settings");
+        SetWeather(1);SetCell(false);present();
+        edit(weatherPage,1,"Weather profiles enabled",0);
+        edit(general,5,"Reset All",0);edit(general,5,"Save",0);
 
     }
     context->ClearState();output.Reset();buffer.Reset();readback.Reset();
@@ -842,6 +1061,9 @@ int wmain(int argc,wchar_t** argv) {
         Check(logged.find("CGE opaque hooks ready")!=std::string::npos,"Native opaque pass hooks installed for selected runtime");
         if(sceneReady)Check(worldDelegations>0 && worldDelegations==opaqueDelegations && opaqueDelegations==decalDelegations,"World, opaque and decal delegates stay balanced");
     }
+    if(frameworkReady && sceneReady && !hdrConflict && !opaqueConflict)
+        Check(logged.find("CGE SSAO temporal: camera reprojection available")!=std::string::npos,
+            "Native camera activates temporal AO with native TAA disabled");
     if(opaqueConflict) {
         Check(logged.find("CGE native SSAO unavailable")!=std::string::npos,"Opaque conflict diagnosed without disabling other effects");
         Check(!memcmp(savedWorldCall,worldFrameFixture+frameOffset,5),"Opaque hook failure leaves no partial world hook");
@@ -849,7 +1071,12 @@ int wmain(int argc,wchar_t** argv) {
     if(missing)Check(logged.find("install SKSE Menu Framework")!=std::string::npos,"Missing framework diagnosis");
     if(old)Check(logged.find("3 API required")!=std::string::npos,"Old framework diagnosis");
     if(incomplete)Check(logged.find("exports are incomplete")!=std::string::npos,"Incomplete API diagnosis");
+    if(interfaceStore32)Check(interfaceDelegations==1,"Relocated 32-bit store preserves the native manager argument and original data target");
+    if(interfaceRip || interfaceLea || interfaceRip32 || interfaceStore32 || interfaceEndbr)Check(interfaceDelegations>0,"Relocated interface accesses the original native RIP-relative data");
     if(!sceneReady)Check(logged.find("scene hook unavailable")!=std::string::npos,"Scene hook failure diagnosis");
+    if(gogRuntime)Check(logged.find("CGE executable variant: GOG")!=std::string::npos &&
+        fixtureLayout.LibraryName().ends_with("-0.bin"),"GOG marker is retained for SKSE and normalized only in the library filename");
+    if(inputConflict)Check(logged.find("CGE native keyboard toggle unavailable")!=std::string::npos && *reinterpret_cast<const volatile unsigned char*>(inputPollFixture+0x7b)==0xe9,"Input hook conflict is diagnosed and left untouched");
     if(hdrConflict)Check(logged.find("HDR hook unavailable")!=std::string::npos,"HDR hook conflict diagnosis");
     std::puts("PASS: production SKSE hooks, late SMF registration, pages, controls, persistence, HUD and input ownership.");
     return 0;

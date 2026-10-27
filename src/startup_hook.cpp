@@ -127,9 +127,35 @@ unsigned char* Resolve(HMODULE executable,const std::filesystem::path& library,
     return result;
 }
 bool ExecutableSpan(const void* entry,std::size_t bytes) {return MappedSpan(entry,bytes,true);}
+std::uintptr_t cameraAccessor{},skyAccessor{};
+const unsigned char* NativeSky() noexcept {
+    if(!skyAccessor)return nullptr;
+    __try {return static_cast<const unsigned char*>(commonlib::InvokeSky(skyAccessor));}
+    __except(EXCEPTION_EXECUTE_HANDLER) {return nullptr;}
+}
+const unsigned char* NativeCamera() noexcept {
+    if(!cameraAccessor)return nullptr;
+    __try {return static_cast<const unsigned char*>(commonlib::InvokeCamera(cameraAccessor));}
+    __except(EXCEPTION_EXECUTE_HANDLER) {return nullptr;}
+}
 bool ReadMemory(const void* source,void* target,std::size_t size) noexcept {
     SIZE_T bytes{};
     return source && ReadProcessMemory(GetCurrentProcess(),source,target,size,&bytes) && bytes==size;
+}
+struct WorldTaa {
+    ULONGLONG tick{};
+    unsigned char value{255};
+};
+thread_local WorldTaa worldTaa;
+bool ReadTaa(unsigned char& value) noexcept {
+    const unsigned char *manager{},*temporal{};
+    return ReadMemory(imageSpaceSingleton,&manager,sizeof(manager)) && manager &&
+        ReadMemory(manager+runtime::selected.temporal,&temporal,sizeof(temporal)) && temporal &&
+        ReadMemory(temporal+runtime::selected.temporalEnabled,&value,sizeof(value)) && value<=1;
+}
+void CaptureWorldTaa() noexcept {
+    unsigned char value{255};
+    worldTaa=ReadTaa(value)?WorldTaa{GetTickCount64(),value}:WorldTaa{};
 }
 }
 namespace {
@@ -156,25 +182,32 @@ bool InitializeMotion(HMODULE executable,const std::filesystem::path& library,st
 }
 MotionInputs PollMotion() noexcept {
     MotionInputs result;
+    const auto observed=worldTaa;worldTaa={};
+    result.probeStatus="Renderer unavailable";
     if(!nativeRenderer)return result;
-    const unsigned char *ui{},*manager{},*temporal{};
-    std::uint32_t pauses{};unsigned char taa{};
+    const unsigned char* ui{};
+    std::uint32_t pauses{};
+    result.probeStatus="UI pause state unavailable";
     if(!ReadMemory(uiSingleton,&ui,sizeof(ui)) || !ui ||
-        !ReadMemory(ui+0x160,&pauses,sizeof(pauses)))return result;
-    if(pauses){result.state=MotionState::Paused;return result;}
-    if(!ReadMemory(imageSpaceSingleton,&manager,sizeof(manager)) || !manager ||
-        !ReadMemory(manager+runtime::selected.temporal,&temporal,sizeof(temporal)) || !temporal ||
-        !ReadMemory(temporal+0x18,&taa,sizeof(taa)))return result;
-    if(taa!=1){result.state=MotionState::TaaDisabled;return result;}
+        !ReadMemory(ui+runtime::selected.uiPauses,&pauses,sizeof(pauses)))return result;
+    if(pauses){result.probeStatus="Game paused";result.state=MotionState::Paused;return result;}
+    result.worldTaa=observed.value<=1 && GetTickCount64()-observed.tick<=100;
+    result.probeStatus="TAA state unavailable";
+    if(result.worldTaa)result.taa=observed.value;
+    else if(!ReadTaa(result.taa))return result;
+    if(result.taa!=1){result.probeStatus="Native TAA disabled";result.state=MotionState::TaaDisabled;return result;}
     void *velocity{},*depth{};
-                                                                                     
-    if(!ReadMemory(nativeRenderer+runtime::selected.renderTargets+7*0x30+0x18,&velocity,sizeof(velocity)) ||
-        !ReadMemory(nativeRenderer+runtime::selected.depthView,&depth,sizeof(depth)))return result;
+    result.probeStatus="Velocity target unavailable";
+    if(!ReadMemory(nativeRenderer+runtime::selected.renderTargets+runtime::selected.velocityTarget*runtime::selected.targetStride+runtime::selected.targetView,&velocity,sizeof(velocity)) || !velocity)return result;
+    result.probeStatus="Depth target unavailable";
+    if(!ReadMemory(nativeRenderer+runtime::selected.depthView,&depth,sizeof(depth)) || !depth)return result;
     ID3D11ShaderResourceView *v{},*d{};
+    result.probeStatus="Velocity GPU view unavailable";
     if(!AcquireNativeView(velocity,&v))return result;
     result.velocity.Attach(v);
+    result.probeStatus="Depth GPU view unavailable";
     if(!AcquireNativeView(depth,&d)){result.velocity.Reset();return result;}
-    result.depth.Attach(d);result.state=MotionState::Ready;return result;
+    result.depth.Attach(d);result.probeStatus="Native buffers acquired";result.state=MotionState::Ready;return result;
 }
 bool InitializeDepth(HMODULE executable,const std::filesystem::path& library,std::string& error) {
     auto* renderer=Resolve(executable,library,runtime::Address::Renderer,runtime::selected.depthView+8,error);
@@ -182,14 +215,11 @@ bool InitializeDepth(HMODULE executable,const std::filesystem::path& library,std
     auto* getter=Resolve(executable,library,runtime::Address::CameraGetter,15,error);
     if(!renderer || !worldRoot || !getter)return false;
                                                                                      
-    constexpr unsigned char load[]={0x48,0x8b,0x05};
-    constexpr unsigned char tail[]={0x48,0x8b,0x80,0x28,0x01,0,0,0xc3};
-    std::int32_t displacement{};memcpy(&displacement,getter+3,4);
-    if(!ExecutableSpan(getter,15) || memcmp(getter,load,sizeof(load)) || memcmp(getter+7,tail,sizeof(tail)) ||
-        getter+7+displacement!=worldRoot) {
-        error="World camera accessor differs; depth effects disabled";return false;
+    if(!ExecutableSpan(getter,15) || !NativeEntry({getter,15})) {
+        error="World camera accessor is unsupported or already redirected; depth effects disabled";return false;
     }
-    depthNativeRenderer=renderer;worldRootSingleton=worldRoot;return true;
+    depthNativeRenderer=renderer;worldRootSingleton=worldRoot;
+    cameraAccessor=reinterpret_cast<std::uintptr_t>(getter);return true;
 }
 DepthInputs PollDepth() noexcept {
     DepthInputs result;
@@ -198,15 +228,22 @@ DepthInputs PollDepth() noexcept {
     float planes[6]{},verified[6]{};unsigned char orthographic{};
                                                                                   
     if(!ReadMemory(worldRootSingleton,&root,sizeof(root)) || !root ||
-        !ReadMemory(root+runtime::selected.camera,&camera,sizeof(camera)) || !camera ||
+        !(camera=NativeCamera()) ||
         !ReadMemory(camera+runtime::selected.frustum,planes,sizeof(planes)) ||
         !ReadMemory(camera+runtime::selected.frustum+0x18,&orthographic,sizeof(orthographic)) || orthographic ||
         !ValidDepthProjection(planes[4],planes[5]) ||
         !ReadMemory(camera+runtime::selected.frustum,verified,sizeof(verified)) || memcmp(planes,verified,sizeof(planes))!=0 ||
-        !ReadMemory(root+runtime::selected.camera,&sameCamera,sizeof(sameCamera)) || sameCamera!=camera ||
+        (sameCamera=NativeCamera())!=camera ||
         !ReadMemory(worldRootSingleton,&sameRoot,sizeof(sameRoot)) || sameRoot!=root) {
         result.state=DepthState::CameraUnavailable;return result;
     }
+    std::array<float,16> projection{},sameProjection{};CameraVector position{},samePosition{};
+    if(ReadMemory(camera+runtime::selected.cameraProjection,projection.data(),sizeof(projection)) &&
+        ReadMemory(camera+runtime::selected.cameraPosition,position.data(),sizeof(position)) &&
+        ReadMemory(camera+runtime::selected.cameraProjection,sameProjection.data(),sizeof(sameProjection)) &&
+        ReadMemory(camera+runtime::selected.cameraPosition,samePosition.data(),sizeof(samePosition)) &&
+        projection==sameProjection && position==samePosition && NativeCamera()==camera)
+        result.camera=CameraFromProjection(projection,position);
     result.nearPlane=planes[4];result.farPlane=planes[5];
     result.left=planes[0];result.right=planes[1];result.top=planes[2];result.bottom=planes[3];
     void* raw{};
@@ -235,6 +272,27 @@ bool InitializeClock(HMODULE executable,const std::filesystem::path& library,std
         error="Calendar singleton is not in readable game data";return false;
     }
     calendarSingleton=address;return true;
+}
+bool InitializeWeather(HMODULE executable,const std::filesystem::path& library,std::string& error) {
+    skyAccessor=0;
+    auto* address=Resolve(executable,library,runtime::Address::SkyGetter,16,error);
+    if(!address || !ExecutableSpan(address,16)) {
+        if(address)error="Sky getter is not executable";
+        return false;
+    }
+    skyAccessor=reinterpret_cast<std::uintptr_t>(address);return true;
+}
+WeatherObservation PollWeather() noexcept {
+    const auto* sky=NativeSky();
+    const unsigned char *current{},*last{},*sameCurrent{},*sameLast{};
+    float progress{};unsigned char currentFlags{},lastFlags{},form{};
+    if(!sky || !ReadMemory(sky+0x48,&current,sizeof(current)) || !current ||
+        !ReadMemory(sky+0x50,&last,sizeof(last)) || !ReadMemory(sky+0x1b8,&progress,sizeof(progress)) ||
+        !ReadMemory(current+0x1a,&form,1) || form!=0x36 || !ReadMemory(current+0x66f,&currentFlags,1))return {};
+    if(last && progress<1 && (!ReadMemory(last+0x1a,&form,1) || form!=0x36 || !ReadMemory(last+0x66f,&lastFlags,1)))return {};
+    if(!ReadMemory(sky+0x48,&sameCurrent,sizeof(sameCurrent)) || current!=sameCurrent ||
+        !ReadMemory(sky+0x50,&sameLast,sizeof(sameLast)) || last!=sameLast || NativeSky()!=sky)return {};
+    return ObserveWeather(currentFlags,lastFlags,progress,last!=nullptr);
 }
 float PollGameHour() noexcept {
     const unsigned char *calendar{},*global{},*sameCalendar{},*sameGlobal{};
@@ -267,14 +325,18 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     if(!before){error="Missing interface callback";return false;}
     auto* entry=Resolve(executable,library,runtime::Address::Interface,32,error);
     if(!entry)return false;
-    const auto length=ExecutableSpan(entry,32)?PrologueLength({entry,32},5):0;
-    if(!length) {
-        error="Interface prologue is unsupported or already hooked; scene effects disabled";return false;
-    }
-    interfaceOriginal.assign(entry,entry+length);
+    if(!ExecutableSpan(entry,32)){error="Interface entry is not executable";return false;}
     auto* relay=NearRelay(entry);
     if(!relay){error="Interface relay allocation failed";return false;}
-    memcpy(relay,entry,length);
+    const auto length=RelocatePrologue({entry,32},{relay,26});
+    if(!length) {
+        VirtualFree(relay,0,MEM_RELEASE);
+        error="Interface prologue cannot be safely relocated or is already hooked; entry bytes=";
+        constexpr char hex[]="0123456789ABCDEF";
+        for(unsigned n=0;n<8;++n){error+=' ';error+=hex[entry[n]>>4];error+=hex[entry[n]&15];}
+        error+="; scene effects disabled";return false;
+    }
+    interfaceOriginal.assign(entry,entry+length);
     AbsoluteJump(relay+length,entry+length);
     AbsoluteJump(relay+40,reinterpret_cast<const void*>(Interface));
     const auto branch=reinterpret_cast<std::intptr_t>(relay+40)-reinterpret_cast<std::intptr_t>(entry+5);
@@ -298,7 +360,7 @@ bool HookInterface(HMODULE executable,const std::filesystem::path& library,
     return true;
 }
 namespace {
-using ImageSpaceDraw=void(*)(void*,std::uint32_t,std::uint32_t,std::uint32_t,void*);
+using ImageSpaceDraw=void(*)(void*,std::uintptr_t,std::uint32_t,std::uint32_t,void*);
 ImageSpaceDraw imageSpaceDraw{};
 void(*beforeTonemap)(ID3D11ShaderResourceView*) noexcept{};
 const unsigned char* bloomRenderer{};
@@ -318,23 +380,26 @@ DecalDraw drawDecals{};
 void(*beginOpaque)() noexcept{};
 void(*endOpaque)() noexcept{};
 thread_local bool inMainWorld=false;
+thread_local bool capturedWorldTaa=false;
 void World(bool value) {
-    const bool parent=inMainWorld;inMainWorld=true;
+    const bool parent=inMainWorld;const bool captured=capturedWorldTaa;
+    if(!parent){capturedWorldTaa=false;worldTaa={};}
+    inMainWorld=true;
     drawWorld(value);
-    endOpaque();inMainWorld=parent;
+    endOpaque();inMainWorld=parent;capturedWorldTaa=captured;
 }
 void Opaque(void* batch,std::uint32_t start,std::uint32_t end,std::uint32_t flags,int group) {
-    if(inMainWorld)beginOpaque();
+    if(inMainWorld){if(!capturedWorldTaa){CaptureWorldTaa();capturedWorldTaa=true;}beginOpaque();}
     drawOpaque(batch,start,end,flags,group);
 }
 void Decals(void* accumulator,std::uint32_t flags) {
     if(inMainWorld)endOpaque();
     drawDecals(accumulator,flags);
 }
-void Tonemap(void* manager,std::uint32_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
+void Tonemap(void* manager,std::uintptr_t effect,std::uint32_t source,std::uint32_t target,void* parameters) {
                                                                         
     void* raw{};
-    if(source<runtime::selected.targetCount && ReadMemory(bloomRenderer+runtime::selected.renderTargets+std::size_t(source)*0x30+0x18,&raw,sizeof(raw))) {
+    if(source<runtime::selected.targetCount && ReadMemory(bloomRenderer+runtime::selected.renderTargets+std::size_t(source)*runtime::selected.targetStride+runtime::selected.targetView,&raw,sizeof(raw))) {
         ID3D11ShaderResourceView* view{};
         if(AcquireNativeView(raw,&view)) {
             beforeTonemap(view);view->Release();
@@ -359,6 +424,54 @@ unsigned char* NearRelay(unsigned char* call) {
     return nullptr;
 }
 }
+namespace {
+CallPatch inputPatch;
+using InputSend=void(*)(void*,const void*);
+InputSend sendInput{};
+void(*keyPressed)(unsigned) noexcept{};
+const void* inputUiSingleton{};
+void InputPress(unsigned key) noexcept {
+    const unsigned char* ui{};std::uint32_t pauses{};
+    if(keyPressed && ReadMemory(inputUiSingleton,&ui,sizeof(ui)) && ui &&
+        ReadMemory(ui+runtime::selected.uiPauses,&pauses,sizeof(pauses)) && !pauses)keyPressed(key);
+}
+void Input(void* source,const void* events) {
+    commonlib::ProcessKeyboard(events,InputPress);
+    sendInput(source,events);
+}
+}
+bool HookInput(HMODULE executable,const std::filesystem::path& library,void(*press)(unsigned) noexcept,std::string& error) {
+    std::lock_guard lock(mutex);if(inputPatch.call)return true;
+    if(!press){error="Missing keyboard callback";return false;}
+    auto* poll=Resolve(executable,library,runtime::Address::InputDispatch,0x80,error);
+    auto* ui=Resolve(executable,library,runtime::Address::UI,sizeof(void*),error);
+    if(!poll || !ui)return false;
+    auto* call=poll+0x7b;
+    if(!ExecutableSpan(call,5) || call[0]!=0xe8){error="Native input dispatch signature differs or is already hooked";return false;}
+    std::int32_t displacement{};memcpy(&displacement,call+1,4);auto* target=call+5+displacement;
+    HMODULE owner{};
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable || !ExecutableSpan(target,32) || !NativeEntry({target,32})) {
+        error="Native input dispatch target is unsupported";return false;
+    }
+    CallPatch patch;patch.call=call;memcpy(patch.original.data(),call,5);patch.relay=NearRelay(call);
+    if(!patch.relay){error="Input relay allocation failed";return false;}
+    AbsoluteJump(patch.relay,reinterpret_cast<void*>(Input));
+    const auto delta=reinterpret_cast<std::intptr_t>(patch.relay)-reinterpret_cast<std::intptr_t>(call+5);
+    DWORD old{},ignored{};
+    if(delta<INT32_MIN || delta>INT32_MAX || !VirtualProtect(patch.relay,64,PAGE_EXECUTE_READ,&old)) {
+        VirtualFree(patch.relay,0,MEM_RELEASE);error="Input relay cannot be used";return false;
+    }
+    FlushInstructionCache(GetCurrentProcess(),patch.relay,64);
+    patch.patch[0]=0xe8;displacement=static_cast<std::int32_t>(delta);memcpy(patch.patch.data()+1,&displacement,4);
+    if(!VirtualProtect(call,5,PAGE_EXECUTE_READWRITE,&old)) {
+        VirtualFree(patch.relay,0,MEM_RELEASE);error="Input call cannot be patched";return false;
+    }
+    sendInput=reinterpret_cast<InputSend>(target);keyPressed=press;inputUiSingleton=ui;
+    memcpy(call,patch.patch.data(),5);VirtualProtect(call,5,old,&ignored);FlushInstructionCache(GetCurrentProcess(),call,5);
+    inputPatch=patch;return true;
+}
+
 bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
     void(*before)(ID3D11ShaderResourceView*) noexcept,std::string& error) {
     std::lock_guard lock(mutex);
@@ -374,7 +487,7 @@ bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
     for(unsigned i=0;i<layout.callCount;++i) {
         auto* call=main+layout.tonemapCalls[i];
         constexpr unsigned char arguments[]={0xba,0x22,0,0,0,0x48,0x8b,0xcb};
-        if(call[0]!=0xe8 || memcmp(call-8,arguments,sizeof(arguments))) {
+        if(call[0]!=0xe8 || (!layout.Id(runtime::Address::Draw) && memcmp(call-8,arguments,sizeof(arguments)))) {
             error="HDR call signature differs or is already hooked; HDR effects disabled";return false;
         }
         std::int32_t displacement{};memcpy(&displacement,call+1,4);
@@ -392,7 +505,7 @@ bool HookTonemap(HMODULE executable,const std::filesystem::path& library,
         if(!ExecutableSpan(target,32)) {
             error="Unexpected HDR call target: unreadable or non-executable entry; HDR effects disabled";return false;
         }
-        if(!PrologueInstruction({target,32})) {
+        if(!NativeEntry({target,32})) {
             error="Unexpected HDR call target: unsupported entry bytes";
             constexpr char hex[]="0123456789ABCDEF";
             for(unsigned n=0;n<8;++n){error+=' ';error+=hex[target[n]>>4];error+=hex[target[n]&15];}
@@ -446,12 +559,12 @@ bool HookOpaque(HMODULE executable,const std::filesystem::path& library,
     std::lock_guard lock(mutex);
     if(!opaquePatches.empty())return true;
     if(!begin || !end){error="Missing opaque callbacks";return false;}
-    const auto& layout=runtime::selected;const bool se=layout.family==runtime::Family::SE;
-    const unsigned worldOffset=se?0x831:layout.version>=runtime::Pack(6,1130)?0x85e:0x841;
+    const auto& layout=runtime::selected;
+    const unsigned worldOffset=layout.worldCall;
     auto* frame=Resolve(executable,library,runtime::Address::WorldFrame,worldOffset+5,error);
-    auto* opaque=Resolve(executable,library,runtime::Address::WorldOpaque,se?0x31e:0x30d,error);
+    auto* opaque=Resolve(executable,library,runtime::Address::WorldOpaque,layout.decalCall+5,error);
     if(!frame || !opaque)return false;
-    std::array<unsigned char*,3> calls={frame+worldOffset,opaque+(se?0x8e:0x84),opaque+(se?0x319:0x308)};
+    std::array<unsigned char*,3> calls={frame+worldOffset,opaque+layout.opaqueCall,opaque+layout.decalCall};
     std::array<void*,3> callbacks={reinterpret_cast<void*>(World),reinterpret_cast<void*>(Opaque),reinterpret_cast<void*>(Decals)};
     std::array<void*,3> targets{};std::vector<CallPatch> pending;
     auto discard=[&] {
@@ -471,7 +584,7 @@ bool HookOpaque(HMODULE executable,const std::filesystem::path& library,
         std::int32_t displacement{};memcpy(&displacement,call+1,4);auto* target=call+5+displacement;
         HMODULE owner{};
         if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable || !ExecutableSpan(target,32) || !PrologueInstruction({target,32})) {
+            reinterpret_cast<LPCWSTR>(target),&owner) || owner!=executable || !ExecutableSpan(target,32) || !NativeEntry({target,32})) {
             discard();error="Opaque call target is unsupported";return false;
         }
         targets[i]=target;CallPatch item;item.call=call;memcpy(item.original.data(),call,5);
@@ -497,6 +610,13 @@ bool HookOpaque(HMODULE executable,const std::filesystem::path& library,
 }
 
 void Shutdown() noexcept {
+    if(inputPatch.call && !memcmp(inputPatch.call,inputPatch.patch.data(),5)) {
+        DWORD old{},ignored{};
+        if(VirtualProtect(inputPatch.call,5,PAGE_EXECUTE_READWRITE,&old)) {
+            memcpy(inputPatch.call,inputPatch.original.data(),5);VirtualProtect(inputPatch.call,5,old,&ignored);
+            FlushInstructionCache(GetCurrentProcess(),inputPatch.call,5);
+        }
+    }
     for(const auto& item:opaquePatches) {
         DWORD old{},ignored{};
         if(item.call && !memcmp(item.call,item.patch.data(),5) && VirtualProtect(item.call,5,PAGE_EXECUTE_READWRITE,&old)) {
@@ -512,8 +632,9 @@ void Shutdown() noexcept {
             }
         }
     }
-    depthNativeRenderer=nullptr;worldRootSingleton=nullptr;
-    playerSingleton=nullptr;calendarSingleton=nullptr;nativeRenderer=nullptr;uiSingleton=imageSpaceSingleton=nullptr;
+    worldTaa={};
+    depthNativeRenderer=nullptr;worldRootSingleton=nullptr;cameraAccessor=0;
+    playerSingleton=nullptr;calendarSingleton=nullptr;skyAccessor=0;nativeRenderer=nullptr;uiSingleton=imageSpaceSingleton=nullptr;
     if(interfaceEntry && !memcmp(interfaceEntry,interfacePatch.data(),interfacePatch.size())) {
         DWORD protection{};
         if(VirtualProtect(interfaceEntry,interfacePatch.size(),PAGE_EXECUTE_READWRITE,&protection)) {

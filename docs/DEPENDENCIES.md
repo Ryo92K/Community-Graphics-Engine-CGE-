@@ -31,7 +31,7 @@ No separate CommonLib DLL, Dear ImGui package or CGE-specific font is required.
 
 ## Framework bridge
 
-CGE registers twenty-one pages on SKSE PostPostLoad. The SSAO page is labeled
+CGE registers twenty-two pages on SKSE PostPostLoad. The SSAO page is labeled
 SSAO. The bridge resolves all required public exports before registering
 any page. Missing, old or incomplete APIs produce a log message without a
 private fallback menu. Effects can still use the INI.
@@ -90,7 +90,7 @@ Context isolation restores native state after each effect. See PERFORMANCE.md.
 The framework fixture hosts a synthetic public API to exercise CGE.dll. The
 D3D11 relay, captures and GPU tests are development tools. None are installed
 or included in the Nexus archive. Tests use synthetic data, not game assets.
-63 automated tests pass; real executable compatibility and GPU cost still
+111 automated tests pass; real executable compatibility and GPU cost still
 require in-game checks. The reported 1.6.1170 startup crash is unconfirmed.
 
 ## References
